@@ -6,6 +6,7 @@ use crate::loader::Loader;
 use move_core_types::{
     account_address::AccountAddress,
     language_storage::{ModuleId, StructTag, TypeTag},
+    tracer::get_trace_block_gen,
     value::MoveTypeLayout,
     vm_status::StatusCode,
 };
@@ -189,6 +190,7 @@ impl<'r, 'l, C: RemoteCache> DataStore for TransactionDataCache<'r, 'l, C> {
         });
 
         if !account_cache.data_map.contains_key(ty) {
+            let _block_trace = get_trace_block_gen("data_cache::load_resource");
             let ty_tag = match self.loader.type_to_type_tag(ty)? {
                 TypeTag::Struct(s_tag) => s_tag,
                 _ =>
