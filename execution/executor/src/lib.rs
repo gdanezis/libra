@@ -821,8 +821,9 @@ impl<V: VMExecutor> BlockExecutor for Executor<V> {
             .map(|id| self.cache.get_block(id))
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let mut max_number_of_tx = 0_usize;
+
         let blocks = arc_blocks.iter().map(|b| b.lock()).collect::<Vec<_>>();
+        let max_number_of_tx = blocks.iter().map(|b| b.transactions().len()).sum();
 
         let mut txns_to_keep = Vec::with_capacity(max_number_of_tx);
         for (txn, txn_data) in blocks.iter().flat_map(|block| {
