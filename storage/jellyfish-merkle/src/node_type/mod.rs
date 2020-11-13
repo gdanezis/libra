@@ -61,7 +61,7 @@ impl NodeKey {
 
     /// A shortcut to generate a node key consisting of a version and an empty nibble path.
     pub fn new_empty_path(version: Version) -> Self {
-        Self::new(version, NibblePath::new(vec![]))
+        Self::new(version, NibblePath::new(Vec::with_capacity(32)))
     }
 
     /// Gets the version.
@@ -98,10 +98,11 @@ impl NodeKey {
 
     /// Serializes to bytes for physical storage enforcing the same order as that in memory.
     pub fn encode(&self) -> Result<Vec<u8>> {
-        let mut out = vec![];
+        let payload = self.nibble_path().bytes();
+        let mut out = Vec::with_capacity(5 + payload.len());
         out.write_u64::<BigEndian>(self.version())?;
         out.write_u8(self.nibble_path().num_nibbles() as u8)?;
-        out.write_all(self.nibble_path().bytes())?;
+        out.write_all(payload)?;
         Ok(out)
     }
 
@@ -425,7 +426,7 @@ impl InternalNode {
         node_key: &NodeKey,
         n: Nibble,
     ) -> (Option<NodeKey>, Vec<HashValue>) {
-        let mut siblings = vec![];
+        let mut siblings = Vec::with_capacity(4);
         let (existence_bitmap, leaf_bitmap) = self.generate_bitmaps();
 
         // Nibble height from 3 to 0.
@@ -597,20 +598,25 @@ impl Node {
 
     /// Serializes to bytes for physical storage.
     pub fn encode(&self) -> Result<Vec<u8>> {
-        let mut out = vec![];
-        match self {
+        let mut out = match self {
             Node::Null => {
+                let mut out = Vec::with_capacity(1);
                 out.push(NodeTag::Null as u8);
+                out
             }
             Node::Internal(internal_node) => {
+                let mut out = Vec::with_capacity(600);
                 out.push(NodeTag::Internal as u8);
-                internal_node.serialize(&mut out)?
+                internal_node.serialize(&mut out)?;
+                out
             }
             Node::Leaf(leaf_node) => {
+                let mut out = Vec::with_capacity(5000);
                 out.push(NodeTag::Leaf as u8);
-                out.extend(lcs::to_bytes(&leaf_node)?);
+                lcs::serialize_into(&mut out, &leaf_node)?;
+                out
             }
-        }
+        };
         Ok(out)
     }
 
