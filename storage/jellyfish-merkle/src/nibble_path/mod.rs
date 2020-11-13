@@ -40,7 +40,8 @@ impl fmt::Debug for NibblePath {
 /// Convert a vector of bytes into `NibblePath` using the lower 4 bits of each byte as nibble.
 impl FromIterator<Nibble> for NibblePath {
     fn from_iter<I: IntoIterator<Item = Nibble>>(iter: I) -> Self {
-        let mut nibble_path = NibblePath::new(vec![]);
+        let init_v = Vec::with_capacity(32);
+        let mut nibble_path = NibblePath::new(init_v);
         for nibble in iter {
             nibble_path.push(nibble);
         }

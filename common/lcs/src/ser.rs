@@ -4,6 +4,8 @@
 use crate::error::{Error, Result};
 use serde::{ser, Serialize};
 
+use std::iter::FromIterator;
+
 /// Serialize the given data structure as a `Vec<u8>` of LCS.
 ///
 /// Serialization can fail if `T`'s implementation of `Serialize` decides to
@@ -50,7 +52,7 @@ pub fn to_bytes<T>(value: &T) -> Result<Vec<u8>>
 where
     T: ?Sized + Serialize,
 {
-    let mut output = Vec::new();
+    let mut output = Vec::with_capacity(10000);
     serialize_into(&mut output, value)?;
     Ok(output)
 }
@@ -92,7 +94,7 @@ where
 }
 
 pub fn is_human_readable() -> bool {
-    let mut output = Vec::new();
+    let mut output = Vec::with_capacity(10000);
     let serializer = Serializer::new(&mut output, crate::MAX_CONTAINER_DEPTH);
     ser::Serializer::is_human_readable(&serializer)
 }
@@ -329,8 +331,8 @@ where
         Ok(self)
     }
 
-    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
-        Ok(MapSerializer::new(self))
+    fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap> {
+        Ok(MapSerializer::new(self, len))
     }
 
     fn serialize_struct(
@@ -441,14 +443,17 @@ struct MapSerializer<'a, W> {
     serializer: Serializer<'a, W>,
     entries: Vec<(Vec<u8>, Vec<u8>)>,
     next_key: Option<Vec<u8>>,
+    output_buffer : Vec<u8>
 }
 
 impl<'a, W> MapSerializer<'a, W> {
-    fn new(serializer: Serializer<'a, W>) -> Self {
+    fn new(serializer: Serializer<'a, W>, len: Option<usize>) -> Self {
+        let size = if let Some(size) = len { size } else { 100 };
         MapSerializer {
             serializer,
-            entries: Vec::new(),
+            entries: Vec::with_capacity(size),
             next_key: None,
+            output_buffer : Vec::with_capacity(1000),
         }
     }
 }
@@ -468,11 +473,13 @@ where
             return Err(Error::ExpectedMapValue);
         }
 
-        let mut output = Vec::new();
+        self.output_buffer.clear();
         key.serialize(Serializer::new(
-            &mut output,
+            &mut self.output_buffer,
             self.serializer.max_remaining_depth,
         ))?;
+
+        let output = Vec::from_iter(self.output_buffer[..].iter().cloned());
         self.next_key = Some(output);
         Ok(())
     }
@@ -483,11 +490,14 @@ where
     {
         match self.next_key.take() {
             Some(key) => {
-                let mut output = Vec::new();
+
+                self.output_buffer.clear();
                 value.serialize(Serializer::new(
-                    &mut output,
+                    &mut self.output_buffer,
                     self.serializer.max_remaining_depth,
                 ))?;
+
+                let output = Vec::from_iter(self.output_buffer[..].iter().cloned());
                 self.entries.push((key, output));
                 Ok(())
             }

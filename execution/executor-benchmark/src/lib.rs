@@ -315,9 +315,8 @@ fn create_storage_service_and_executor(
     let waypoint = generate_waypoint::<LibraVM>(&db_rw, get_genesis_txn(config).unwrap()).unwrap();
     maybe_bootstrap::<LibraVM>(&db_rw, get_genesis_txn(config).unwrap(), waypoint).unwrap();
 
-    let _handle = start_storage_service_with_db(config, db.clone());
     let executor = Executor::new(
-        StorageClient::new(&config.storage.address, config.storage.timeout_ms).into(),
+        db_rw
     );
 
     (db, executor)
