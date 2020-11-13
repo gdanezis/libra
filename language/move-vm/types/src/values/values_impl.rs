@@ -1904,9 +1904,9 @@ impl VectorRef {
         if idx >= c.len() {
             return Ok(NativeResult::err(cost, INDEX_OUT_OF_BOUNDS));
         }
-        Ok(NativeResult::ok(
+        Ok(NativeResult::ok_one(
             cost,
-            vec![Value(self.0.borrow_elem(idx)?)],
+            Value(self.0.borrow_elem(idx)?),
         ))
     }
 
@@ -1957,7 +1957,7 @@ impl VectorRef {
 
         self.0.mark_dirty();
 
-        Ok(NativeResult::ok(cost, vec![res]))
+        Ok(NativeResult::ok_one(cost, res))
     }
 
     pub fn swap(
@@ -1994,7 +1994,7 @@ impl VectorRef {
 
         self.0.mark_dirty();
 
-        Ok(NativeResult::ok(cost, vec![]))
+        Ok(NativeResult::ok_none(cost))
     }
 }
 
@@ -2035,7 +2035,7 @@ impl Vector {
             }
         };
 
-        Ok(NativeResult::ok(cost, vec![container]))
+        Ok(NativeResult::ok_one(cost, container))
     }
 
     pub fn destroy_empty(
@@ -2058,7 +2058,7 @@ impl Vector {
         };
 
         if is_empty {
-            Ok(NativeResult::ok(cost, vec![]))
+            Ok(NativeResult::ok_none(cost))
         } else {
             Ok(NativeResult::err(cost, DESTROY_NON_EMPTY_VEC))
         }

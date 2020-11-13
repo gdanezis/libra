@@ -77,6 +77,20 @@ impl NativeResult {
         }
     }
 
+    pub fn ok_one(cost: GasUnits<GasCarrier>, value: Value) -> Self {
+        NativeResult {
+            cost,
+            result: Ok(vec![value]),
+        }
+    }
+
+    pub fn ok_none(cost: GasUnits<GasCarrier>) -> Self {
+        NativeResult {
+            cost,
+            result: Ok(vec![]),
+        }
+    }
+
     /// Failed execution. The failure is a runtime failure in the function and not an invariant
     /// failure of the VM which would raise a `PartialVMError` error directly.
     /// The only thing the funciton can specify is its abort code, as if it had invoked the `Abort`
