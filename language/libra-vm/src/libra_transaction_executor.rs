@@ -189,7 +189,7 @@ impl LibraVM {
                 .map_err(|e| e.into_vm_status())?;
             session
                 .execute_script(
-                    script.code().to_vec(),
+                    script.code(),
                     script.ty_args().to_vec(),
                     convert_txn_args(script.args()),
                     vec![txn_data.sender()],
@@ -370,7 +370,7 @@ impl LibraVM {
                 };
                 let execution_result = tmp_session
                     .execute_script(
-                        script.code().to_vec(),
+                        script.code(),
                         script.ty_args().to_vec(),
                         args,
                         senders,

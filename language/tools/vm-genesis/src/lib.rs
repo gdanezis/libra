@@ -225,7 +225,7 @@ fn exec_script(
 ) {
     session
         .execute_script(
-            script.code().to_vec(),
+            script.code(),
             script.ty_args().to_vec(),
             convert_txn_args(script.args()),
             vec![sender],

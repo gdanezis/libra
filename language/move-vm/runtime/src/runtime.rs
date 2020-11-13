@@ -95,7 +95,7 @@ impl VMRuntime {
     // See Session::execute_script for what contracts to follow.
     pub(crate) fn execute_script(
         &self,
-        script: Vec<u8>,
+        script: &[u8],
         ty_args: Vec<TypeTag>,
         mut args: Vec<Value>,
         senders: Vec<AccountAddress>,
