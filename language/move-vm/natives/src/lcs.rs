@@ -15,7 +15,7 @@ use vm::errors::PartialVMResult;
 pub fn native_to_bytes(
     context: &mut impl NativeContext,
     mut ty_args: Vec<Type>,
-    mut args: VecDeque<Value>,
+    mut args: &mut VecDeque<Value>,
 ) -> PartialVMResult<NativeResult> {
     debug_assert!(ty_args.len() == 1);
     debug_assert!(args.len() == 1);

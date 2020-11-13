@@ -65,6 +65,9 @@ pub(crate) struct Interpreter<L: LogContext> {
     call_stack: CallStack,
     // Logger to report information to clients
     log_context: L,
+
+    // Scrach space to prevent allocations
+    arguments : Option<VecDeque<Value>>,
 }
 
 impl<L: LogContext> Interpreter<L> {
@@ -92,6 +95,7 @@ impl<L: LogContext> Interpreter<L> {
             operand_stack: Stack::new(),
             call_stack: CallStack::new(),
             log_context,
+            arguments : Some(VecDeque::with_capacity(10)),
         }
     }
 
@@ -279,14 +283,26 @@ impl<L: LogContext> Interpreter<L> {
         function: Arc<Function>,
         ty_args: Vec<Type>,
     ) -> PartialVMResult<()> {
-        let mut arguments = VecDeque::new();
         let expected_args = function.arg_count();
+
+        let mut arguments = if let Some(args) = self.arguments.take() {
+            args
+        }
+        else
+        {
+            VecDeque::with_capacity(10)
+        };
+        arguments.clear();
+
         for _ in 0..expected_args {
             arguments.push_front(self.operand_stack.pop()?);
         }
+
+
         let mut native_context = FunctionContext::new(self, data_store, cost_strategy, resolver);
         let native_function = function.get_native()?;
-        let result = native_function.dispatch(&mut native_context, ty_args, arguments)?;
+
+        let result = native_function.dispatch(&mut native_context, ty_args, &mut arguments)?;
         cost_strategy.deduct_gas(result.cost)?;
         let values = result
             .result
@@ -294,6 +310,7 @@ impl<L: LogContext> Interpreter<L> {
         for value in values {
             self.operand_stack.push(value)?;
         }
+        self.arguments = Some(arguments);
         Ok(())
     }
 

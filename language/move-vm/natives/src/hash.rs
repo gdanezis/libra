@@ -15,7 +15,7 @@ use vm::errors::PartialVMResult;
 pub fn native_sha2_256(
     context: &impl NativeContext,
     _ty_args: Vec<Type>,
-    mut arguments: VecDeque<Value>,
+    arguments: &mut VecDeque<Value>,
 ) -> PartialVMResult<NativeResult> {
     debug_assert!(_ty_args.is_empty());
     debug_assert!(arguments.len() == 1);
@@ -36,7 +36,7 @@ pub fn native_sha2_256(
 pub fn native_sha3_256(
     context: &impl NativeContext,
     _ty_args: Vec<Type>,
-    mut arguments: VecDeque<Value>,
+    arguments: &mut VecDeque<Value>,
 ) -> PartialVMResult<NativeResult> {
     debug_assert!(_ty_args.is_empty());
     debug_assert!(arguments.len() == 1);

@@ -84,7 +84,7 @@ impl NativeFunction {
         self,
         ctx: &mut impl NativeContext,
         t: Vec<Type>,
-        v: VecDeque<Value>,
+        v: &mut VecDeque<Value>,
     ) -> PartialVMResult<NativeResult> {
         let result = match self {
             Self::HashSha2_256 => hash::native_sha2_256(ctx, t, v),

@@ -14,7 +14,7 @@ use vm::errors::PartialVMResult;
 pub fn native_ed25519_publickey_validation(
     context: &impl NativeContext,
     _ty_args: Vec<Type>,
-    mut arguments: VecDeque<Value>,
+    arguments: &mut VecDeque<Value>,
 ) -> PartialVMResult<NativeResult> {
     debug_assert!(_ty_args.is_empty());
     debug_assert!(arguments.len() == 1);
@@ -36,7 +36,7 @@ pub fn native_ed25519_publickey_validation(
 pub fn native_ed25519_signature_verification(
     context: &impl NativeContext,
     _ty_args: Vec<Type>,
-    mut arguments: VecDeque<Value>,
+    arguments: &mut VecDeque<Value>,
 ) -> PartialVMResult<NativeResult> {
     debug_assert!(_ty_args.is_empty());
     debug_assert!(arguments.len() == 3);

@@ -14,7 +14,7 @@ use vm::errors::PartialVMResult;
 pub fn native_emit_event(
     context: &mut impl NativeContext,
     mut ty_args: Vec<Type>,
-    mut arguments: VecDeque<Value>,
+    arguments: &mut VecDeque<Value>,
 ) -> PartialVMResult<NativeResult> {
     debug_assert!(ty_args.len() == 1);
     debug_assert!(arguments.len() == 3);

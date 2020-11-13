@@ -8,7 +8,7 @@
 //! `pub fn native_function(
 //!     context: &mut impl NativeContext,
 //!     ty_args: Vec<Type>,
-//!     mut arguments: VecDeque<Value>,
+//!     arguments: &mut VecDeque<Value>,
 //! ) -> PartialVMResult<NativeResult>;`
 //!
 //! arguments are passed with first argument at position 0 and so forth.
@@ -65,29 +65,22 @@ pub struct NativeResult {
     /// The cost for running that function, whether successfully or not.
     pub cost: GasUnits<GasCarrier>,
     /// Result of execution. This is either the return values or the error to report.
-    pub result: Result<Vec<Value>, u64>,
+    pub result: Result<Option<Value>, u64>,
 }
 
 impl NativeResult {
-    /// Return values of a successful execution.
-    pub fn ok(cost: GasUnits<GasCarrier>, values: Vec<Value>) -> Self {
-        NativeResult {
-            cost,
-            result: Ok(values),
-        }
-    }
 
     pub fn ok_one(cost: GasUnits<GasCarrier>, value: Value) -> Self {
         NativeResult {
             cost,
-            result: Ok(vec![value]),
+            result: Ok(Some(value)),
         }
     }
 
     pub fn ok_none(cost: GasUnits<GasCarrier>) -> Self {
         NativeResult {
             cost,
-            result: Ok(vec![]),
+            result: Ok(None),
         }
     }
 

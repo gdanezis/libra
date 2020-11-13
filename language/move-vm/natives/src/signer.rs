@@ -13,7 +13,7 @@ use vm::errors::PartialVMResult;
 pub fn native_borrow_address(
     context: &impl NativeContext,
     _ty_args: Vec<Type>,
-    mut arguments: VecDeque<Value>,
+    arguments: &mut VecDeque<Value>,
 ) -> PartialVMResult<NativeResult> {
     debug_assert!(_ty_args.is_empty());
     debug_assert!(arguments.len() == 1);
