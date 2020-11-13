@@ -68,6 +68,7 @@ pub(crate) struct Interpreter<L: LogContext> {
 
     // Scrach space to prevent allocations
     arguments : Option<VecDeque<Value>>,
+    locals : Vec<Locals>,
 }
 
 impl<L: LogContext> Interpreter<L> {
@@ -96,6 +97,7 @@ impl<L: LogContext> Interpreter<L> {
             call_stack: CallStack::new(),
             log_context,
             arguments : Some(VecDeque::with_capacity(10)),
+            locals : Vec::new(),
         }
     }
 
@@ -153,6 +155,7 @@ impl<L: LogContext> Interpreter<L> {
                         .check_resources_for_return()
                         .map_err(|e| set_err_info!(current_frame, e))?;
                     if let Some(frame) = self.call_stack.pop() {
+                        self.locals.push(current_frame.reclaim_locals());
                         current_frame = frame;
                         current_frame.pc += 1; // advance past the Call instruction in the caller
                     } else {
@@ -233,7 +236,17 @@ impl<L: LogContext> Interpreter<L> {
     /// Native functions do not push a frame at the moment and as such errors from a native
     /// function are incorrectly attributed to the caller.
     fn make_call_frame(&mut self, func: Arc<Function>, ty_args: Vec<Type>) -> VMResult<Frame> {
-        let mut locals = Locals::new(func.local_count());
+
+        let mut locals = if self.locals.is_empty() {
+            Locals::new(func.local_count())
+        }
+        else
+        {
+            let loc = self.locals.pop().unwrap();
+            loc.reset(func.local_count());
+            loc
+        };
+
         let arg_count = func.arg_count();
         for i in 0..arg_count {
             locals
@@ -599,7 +612,7 @@ struct Stack(Vec<Value>);
 impl Stack {
     /// Create a new empty operand stack.
     fn new() -> Self {
-        Stack(vec![])
+        Stack(Vec::with_capacity(50))
     }
 
     /// Push a `Value` on the stack if the max stack size has not been reached. Abort execution
@@ -648,7 +661,7 @@ struct CallStack(Vec<Frame>);
 impl CallStack {
     /// Create a new empty call stack.
     fn new() -> Self {
-        CallStack(vec![])
+        CallStack(Vec::with_capacity(50))
     }
 
     /// Push a `Frame` on the call stack.
@@ -701,6 +714,10 @@ impl Frame {
             function,
             ty_args,
         }
+    }
+
+    fn reclaim_locals(self) -> Locals{
+        return self.locals;
     }
 
     /// Execute a Move function until a return or a call opcode is found.

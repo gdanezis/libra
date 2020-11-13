@@ -71,7 +71,7 @@ impl<'r, 'l, R: RemoteCache> Session<'r, 'l, R> {
     pub fn execute_script(
         &mut self,
         script: &[u8],
-        ty_args: Vec<TypeTag>,
+        ty_args: &[TypeTag],
         args: Vec<Value>,
         senders: Vec<AccountAddress>,
         cost_strategy: &mut CostStrategy,

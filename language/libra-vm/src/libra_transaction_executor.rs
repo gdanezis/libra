@@ -190,7 +190,7 @@ impl LibraVM {
             session
                 .execute_script(
                     script.code(),
-                    script.ty_args().to_vec(),
+                    script.ty_args(),
                     convert_txn_args(script.args()),
                     vec![txn_data.sender()],
                     cost_strategy,
@@ -371,7 +371,7 @@ impl LibraVM {
                 let execution_result = tmp_session
                     .execute_script(
                         script.code(),
-                        script.ty_args().to_vec(),
+                        script.ty_args(),
                         args,
                         senders,
                         &mut cost_strategy,

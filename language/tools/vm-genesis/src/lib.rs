@@ -226,7 +226,7 @@ fn exec_script(
     session
         .execute_script(
             script.code(),
-            script.ty_args().to_vec(),
+            script.ty_args(),
             convert_txn_args(script.args()),
             vec![sender],
             &mut CostStrategy::system(&ZERO_COST_SCHEDULE, GasUnits::new(100_000_000)),

@@ -1098,6 +1098,12 @@ impl Locals {
         )))
     }
 
+    pub fn reset(&self, n: usize) {
+        let mut v = self.0.borrow_mut();
+        v.clear();
+        *v = iter::repeat_with(|| ValueImpl::Invalid).take(n).collect();
+    }
+
     pub fn check_resources_for_return(&self) -> PartialVMResult<()> {
         for v in self.0.borrow().iter() {
             if v.is_resource()? {

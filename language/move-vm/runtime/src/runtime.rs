@@ -96,7 +96,7 @@ impl VMRuntime {
     pub(crate) fn execute_script(
         &self,
         script: &[u8],
-        ty_args: Vec<TypeTag>,
+        ty_args: &[TypeTag],
         mut args: Vec<Value>,
         senders: Vec<AccountAddress>,
         data_store: &mut impl DataStore,
