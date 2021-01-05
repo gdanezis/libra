@@ -253,7 +253,7 @@ impl DiemVM {
     }
 
     fn execute_user_transaction(
-        &mut self,
+        &self,
         remote_cache: &StateViewCache<'_>,
         txn: &SignatureCheckedTransaction,
         log_context: &impl LogContext,
@@ -389,8 +389,8 @@ impl DiemVM {
     }
 
     fn process_waypoint_change_set(
-        &mut self,
-        remote_cache: &mut StateViewCache<'_>,
+        &self,
+        remote_cache: &StateViewCache<'_>,
         writeset_payload: WriteSetPayload,
         log_context: &impl LogContext,
     ) -> Result<(VMStatus, TransactionOutput), VMStatus> {
@@ -409,8 +409,8 @@ impl DiemVM {
     }
 
     fn process_block_prologue(
-        &mut self,
-        remote_cache: &mut StateViewCache<'_>,
+        &self,
+        remote_cache: &StateViewCache<'_>,
         block_metadata: BlockMetadata,
         log_context: &impl LogContext,
     ) -> Result<(VMStatus, TransactionOutput), VMStatus> {
@@ -461,8 +461,8 @@ impl DiemVM {
     }
 
     fn process_writeset_transaction(
-        &mut self,
-        remote_cache: &mut StateViewCache<'_>,
+        &self,
+        remote_cache: &StateViewCache<'_>,
         txn: SignatureCheckedTransaction,
         log_context: &impl LogContext,
     ) -> Result<(VMStatus, TransactionOutput), VMStatus> {
@@ -579,8 +579,8 @@ impl DiemVM {
 
 
     fn execute_single_txn(
-            &mut self,
-            data_cache: &mut StateViewCache,
+            &self,
+            data_cache: &StateViewCache,
             txn : &Result<PreprocessedTransaction, VMStatus>,
             log_context : &impl LogContext,
         ) -> Result<(VMStatus, TransactionOutput, Option<String>), VMStatus> {
@@ -666,11 +666,16 @@ impl DiemVM {
             while signature_verified_block.len() != 0 {
                 let xref = &*data_cache;
                 let mut inner_results = Vec::new();
-                inner_results = signature_verified_block.par_iter().enumerate().map(|(idx, txn)| {
-                    let mut state_view_cache = StateViewCache::new(xref);
-                    let mut vm = self.clone();
-                    let log_context = AdapterLogSchema::new(state_view_cache.id(), idx);
-                    vm.execute_single_txn(&mut state_view_cache, txn, &log_context)
+                let ref_vm = &*self;
+                inner_results = signature_verified_block.par_iter().enumerate().chunks(50).flat_map_iter(|txn_batch| {
+                    // let mut state_view_cache = StateViewCache::new(xref);
+                    //let mut vm = self.clone();
+                    let mut results = Vec::new();
+                    for (idx, txn) in txn_batch {
+                        let log_context = AdapterLogSchema::new(xref.id(), idx);
+                        results.push(ref_vm.execute_single_txn(xref, txn, &log_context))
+                    }
+                    results
                 }).collect();
 
                 let mut hist = HashMap::new();
@@ -760,6 +765,7 @@ impl DiemVM {
         // Record the histogram count for transactions per block.
         BLOCK_TRANSACTION_COUNT.observe(count as f64);
 
+        println!("RETURN {} resutls", result.len());
         Ok(result)
     }
 
