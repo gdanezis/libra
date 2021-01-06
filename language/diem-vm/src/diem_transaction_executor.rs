@@ -668,14 +668,16 @@ impl DiemVM {
                 let mut inner_results = Vec::new();
                 let ref_vm = &*self;
                 inner_results = signature_verified_block.par_iter().enumerate().chunks(50).flat_map_iter(|txn_batch| {
-                    // let mut state_view_cache = StateViewCache::new(xref);
-                    //let mut vm = self.clone();
+                    // Gives us a small block of 50 transactions
                     let mut results = Vec::new();
                     for (idx, txn) in txn_batch {
+                        // Make a fresh data cache using the overall data cache underneath.
                         let local_state_view_cache = StateViewCache::new(xref);
                         let log_context = AdapterLogSchema::new(xref.id(), idx);
-                        let read_set = local_state_view_cache.read_set();
+                        // Execute the transaction
                         let res = ref_vm.execute_single_txn(&local_state_view_cache, txn, &log_context);
+                        // Record the read-set
+                        let read_set = local_state_view_cache.read_set();
                         results.push((res, read_set));
                     }
                     results
