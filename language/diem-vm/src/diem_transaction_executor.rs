@@ -670,8 +670,8 @@ impl DiemVM {
                 let xref = &*data_cache;
                 let mut inner_results = Vec::new();
                 let ref_vm = &*self;
-                inner_results = signature_verified_block.par_iter().enumerate().chunks(50).flat_map_iter(|txn_batch| {
-                    // Gives us a small block of 50 transactions
+                inner_results = signature_verified_block.par_iter().enumerate().chunks(10).flat_map_iter(|txn_batch| {
+                    // Gives us a small block of transactions
                     let mut results = Vec::new();
                     for (idx, txn) in txn_batch {
                         // Make a fresh data cache using the overall data cache underneath.
@@ -699,10 +699,21 @@ impl DiemVM {
                             // If there is a dirsty read, we need to re-run this transaction later
                             if dep_read != 0 {
                                 remaining_txs.push(txn);
+                                //println!("Defer.");
+
+                                if !output.status().is_discarded() {
+                                    // If this was to be successful, then bump the history
+                                    // to defer dependent transactions.
+                                    for (ap, _) in output.write_set() {
+                                        *hist.entry(ap.clone()).or_insert(0) += 1;
+                                    }
+                                }
+
                                 continue
                             }
 
                             if !output.status().is_discarded() {
+                                //println!("Commit. Read-set {}: {:?}", read_set.len(), output.status());
                                 // Make a historgram of paths, and how many times they are written to.
                                 for (ap, _) in output.write_set() {
                                     *hist.entry(ap.clone()).or_insert(0) += 1;
@@ -714,7 +725,7 @@ impl DiemVM {
                             }
                             else {
                                 discarded += 1;
-                                println!("Error: {:?}", output.status());
+                                //println!("Error: {:?} read-set {}", output.status(), read_set.len());
                                 // println!("Read Set len: {} -- {:?}", read_set.len(), read_set);
 
                                 result.push((vm_status, output));
