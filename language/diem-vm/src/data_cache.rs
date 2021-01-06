@@ -42,7 +42,7 @@ use std::collections::HashSet;
 pub struct StateViewCache<'a> {
     pub data_view: &'a dyn StateView,
     data_map: BTreeMap<AccessPath, Option<Vec<u8>>>,
-    reads : Mutex<HashSet<AccessPath>>,
+    reads : Mutex<Vec<AccessPath>>,
 }
 
 unsafe impl<'a> Sync for StateViewCache<'a> {}
@@ -54,7 +54,7 @@ impl<'a> StateViewCache<'a> {
         StateViewCache {
             data_view,
             data_map: BTreeMap::new(),
-            reads : Mutex::new(HashSet::new()),
+            reads : Mutex::new(Vec::new()),
         }
     }
 
@@ -87,7 +87,7 @@ impl<'block> StateView for StateViewCache<'block> {
             "Injected failure in data_cache::get"
         )));
 
-        self.reads.lock().unwrap().insert(access_path.clone());
+        self.reads.lock().unwrap().push(access_path.clone());
         match self.data_map.get(access_path) {
             Some(opt_data) => Ok(opt_data.clone()),
             None => match self.data_view.get(&access_path) {

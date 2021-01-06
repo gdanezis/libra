@@ -19,6 +19,7 @@ use diem_logger::prelude::*;
 use diem_state_view::StateView;
 use diem_trace::prelude::*;
 use diem_types::{
+    access_path::AccessPath,
     account_config,
     block_metadata::BlockMetadata,
     transaction::{
@@ -47,6 +48,8 @@ use std::{
 
 use std::cmp::max;
 use std::collections::HashMap;
+
+
 
 #[derive(Clone)]
 pub struct DiemVM(DiemVMImpl);
@@ -660,7 +663,7 @@ impl DiemVM {
                 .collect();
         }
 
-        let parallel = true;
+        let parallel = (num_txns == 10000);
         if parallel {
 
             let mut discarded = 0;
@@ -708,7 +711,6 @@ impl DiemVM {
                                         *hist.entry(ap.clone()).or_insert(0) += 1;
                                     }
                                 }
-
                                 continue
                             }
 
@@ -719,6 +721,49 @@ impl DiemVM {
                                     *hist.entry(ap.clone()).or_insert(0) += 1;
                                 }
 
+                                let print_read_write_set = false;
+                                if print_read_write_set {
+
+                                    let write_set : HashSet<AccessPath> = output.write_set().iter().map(|(k,_)| { k }).cloned().collect();
+                                    println!("TRANSACTION:");
+
+                                    if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
+                                        match user_txn.payload() {
+                                            TransactionPayload::Script(script) => {
+                                                // load sender to cache
+                                                println!("    Sender: {}", user_txn.sender());
+                                                // to_cache.push(AccessPath::new(txn.sender(), vec![]));
+                                                // data_cache.get(&AccessPath::new(txn.sender(), vec![]));
+                                                // extract arguments of type Address and load to cache
+
+                                                for arg in script.args() {
+                                                    match arg {
+                                                        TransactionArgument::Address(address) =>
+                                                        {
+                                                            println!("    Address: {}", address);
+                                                        },
+                                                        x => {
+                                                            println!("    Other: {:?}", x);
+                                                        },
+                                                    };
+                                                }
+                                            },
+                                            _ => {}
+                                        }
+                                    }
+
+                                    for path in read_set {
+                                        if write_set.contains(&path){
+                                            println!("  -W {}", path);
+                                        }
+                                        else
+                                        {
+                                            println!("  -R {}", path);
+                                        }
+                                    }
+                                }
+
+
                                 // Commit the results to the data cache
                                 data_cache.push_write_set(output.write_set());
                                 result.push((vm_status, output))
@@ -727,6 +772,7 @@ impl DiemVM {
                                 discarded += 1;
                                 //println!("Error: {:?} read-set {}", output.status(), read_set.len());
                                 // println!("Read Set len: {} -- {:?}", read_set.len(), read_set);
+
 
                                 result.push((vm_status, output));
                             }
@@ -917,4 +963,70 @@ impl AsMut<DiemVMImpl> for DiemVM {
     fn as_mut(&mut self) -> &mut DiemVMImpl {
         &mut self.0
     }
+}
+
+// Structure that holds infered read/write sets
+
+#[derive(Clone)]
+enum ScriptReadWriteSetVar {
+    Const,
+    Param(usize),
+}
+
+pub struct ScriptReadWriteSet {
+    reads : Vec<(ScriptReadWriteSetVar, AccessPath)>,
+    writes : Vec<(ScriptReadWriteSetVar, AccessPath)>,
+}
+
+impl ScriptReadWriteSet {
+
+    // Given a set of address parameters, by convention [Sender, Address, Address, ...], and some read and write
+    // access paths, it infers which are static and which dynamic, stores the structure to allow inference about others.
+    pub fn new(params : Vec<AccountAddress>, reads: Vec<AccessPath>, writes: Vec<AccessPath>) -> ScriptReadWriteSet {
+        ScriptReadWriteSet {
+            reads : reads.into_iter().map(|path| {
+                let var = match params.iter().position(|&x| x == path.address){
+                    None => ScriptReadWriteSetVar::Const,
+                    Some(i) => ScriptReadWriteSetVar::Param(i),
+                };
+                (var, path)
+            }).collect(),
+            writes : writes.into_iter().map(|path| {
+                let var = match params.iter().position(|&x| x == path.address){
+                    None => ScriptReadWriteSetVar::Const,
+                    Some(i) => ScriptReadWriteSetVar::Param(i),
+                };
+                (var, path)
+            }).collect(),
+        }
+    }
+
+    // Return the read access paths specialized for these parameters
+    // TODO: return a result in case the params are not long enough.
+    pub fn reads(&self, params : Vec<AccountAddress>) -> Vec<AccessPath> {
+        self.reads.iter().cloned().map(|(v, mut p)| {
+            match v {
+                ScriptReadWriteSetVar::Const => p,
+                ScriptReadWriteSetVar::Param(i) => {
+                    p.address = params[i];
+                    p
+                },
+            }
+        } ).collect()
+    }
+
+    // Return the write access paths specialized for these parameters
+    // TODO: return a result in case the params are not long enough.
+    pub fn writes(&self, params : Vec<AccountAddress>) -> Vec<AccessPath> {
+        self.writes.iter().cloned().map(|(v, mut p)| {
+            match v {
+                ScriptReadWriteSetVar::Const => p,
+                ScriptReadWriteSetVar::Param(i) => {
+                    p.address = params[i];
+                    p
+                },
+            }
+        } ).collect()
+    }
+
 }
