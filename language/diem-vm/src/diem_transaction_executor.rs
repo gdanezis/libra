@@ -672,37 +672,39 @@ impl DiemVM {
                     //let mut vm = self.clone();
                     let mut results = Vec::new();
                     for (idx, txn) in txn_batch {
+                        let local_state_view_cache = StateViewCache::new(xref);
                         let log_context = AdapterLogSchema::new(xref.id(), idx);
-                        results.push(ref_vm.execute_single_txn(xref, txn, &log_context))
+                        let read_set = local_state_view_cache.read_set();
+                        let res = ref_vm.execute_single_txn(&local_state_view_cache, txn, &log_context);
+                        results.push((res, read_set));
                     }
                     results
                 }).collect();
 
                 let mut hist = HashMap::new();
                 let mut remaining_txs = Vec::with_capacity(signature_verified_block.len());
-                for (res, txn) in inner_results.into_iter().zip(signature_verified_block.into_iter()) {
+                for ((res, read_set), txn) in inner_results.into_iter().zip(signature_verified_block.into_iter()) {
                     match res {
                         Ok((vm_status, output, sender)) => {
+                            // Check if there is a 'dirty' read
+                            let mut dep_read = 0;
+                            for path in read_set {
+                                dep_read = max(dep_read, *hist.entry(path).or_insert(0));
+                            }
+                            // If there is a dirsty read, we need to re-run this transaction later
+                            if dep_read != 0 {
+                                remaining_txs.push(txn);
+                            }
+
                             if !output.status().is_discarded() {
                                 // Make a historgram of paths, and how many times they are written to.
-                                // If a transaction is the first to write (hist[path] = 1) to paths
-                                // in its write set, then it can proceed to write to the data cache.
-                                // If not (eg. hist[path] > 0), then it must be re-computed.
-                                let mut dep_max = 0;
                                 for (ap, _) in output.write_set() {
                                     *hist.entry(ap.clone()).or_insert(0) += 1;
-                                    dep_max = max(hist[ap], dep_max);
                                 }
 
-                                if dep_max == 1 {
-                                    // Commit the results
-                                    data_cache.push_write_set(output.write_set());
-                                    result.push((vm_status, output))
-                                }
-                                else {
-                                    // Write variable already set, try again:
-                                    remaining_txs.push(txn);
-                                }
+                                // Commit the results to the data cache
+                                data_cache.push_write_set(output.write_set());
+                                result.push((vm_status, output))
                             }
                             else {
                                 result.push((vm_status, output));

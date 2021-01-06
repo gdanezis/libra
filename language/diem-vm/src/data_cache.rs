@@ -53,6 +53,10 @@ impl<'a> StateViewCache<'a> {
         }
     }
 
+    pub fn read_set(&self) -> Vec<AccessPath> {
+        self.data_map.keys().cloned().collect()
+    }
+
     // Publishes a `WriteSet` computed at the end of a transaction.
     // The effect is to build a layer in front of the `StateView` which keeps
     // track of the data as if the changes were applied immediately.
