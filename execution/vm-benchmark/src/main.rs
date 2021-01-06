@@ -15,7 +15,7 @@ struct Opt {
     #[structopt(long, default_value = "500")]
     block_size: usize,
 
-    #[structopt(long, default_value = "1000")]
+    #[structopt(long, default_value = "1")]
     num_transfer_blocks: usize,
 
     #[structopt(long, parse(from_os_str))]
@@ -26,6 +26,11 @@ fn main() {
     let opt = Opt::from_args();
 
     diem_logger::Logger::new().init();
+
+    rayon::ThreadPoolBuilder::new()
+    .thread_name(|index| format!("rayon-global-{}", index))
+    .build_global()
+    .expect("Failed to build rayon global thread pool.");
 
     vm_benchmark::run_benchmark(
         opt.num_accounts,

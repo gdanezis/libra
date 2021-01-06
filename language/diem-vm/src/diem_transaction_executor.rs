@@ -663,7 +663,10 @@ impl DiemVM {
         let parallel = true;
         if parallel {
 
+            let mut discarded = 0;
+            let mut exec_step = 0;
             while signature_verified_block.len() != 0 {
+                println!("EXEC_STEP {} TX: {}", exec_step, signature_verified_block.len());
                 let xref = &*data_cache;
                 let mut inner_results = Vec::new();
                 let ref_vm = &*self;
@@ -690,12 +693,13 @@ impl DiemVM {
                         Ok((vm_status, output, sender)) => {
                             // Check if there is a 'dirty' read
                             let mut dep_read = 0;
-                            for path in read_set {
+                            for path in read_set.clone() {
                                 dep_read = max(dep_read, *hist.entry(path).or_insert(0));
                             }
                             // If there is a dirsty read, we need to re-run this transaction later
                             if dep_read != 0 {
                                 remaining_txs.push(txn);
+                                continue
                             }
 
                             if !output.status().is_discarded() {
@@ -709,6 +713,10 @@ impl DiemVM {
                                 result.push((vm_status, output))
                             }
                             else {
+                                discarded += 1;
+                                println!("Error: {:?}", output.status());
+                                // println!("Read Set len: {} -- {:?}", read_set.len(), read_set);
+
                                 result.push((vm_status, output));
                             }
                         },
@@ -718,7 +726,9 @@ impl DiemVM {
                     }
                 }
                 signature_verified_block = remaining_txs;
+                exec_step +=1;
             }
+            println!("Discarded {}", discarded);
 
         } else {
 

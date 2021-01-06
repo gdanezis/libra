@@ -122,6 +122,7 @@ impl TransactionGenerator {
                 transactions.push(txn);
             }
 
+            println!("SEND ACCOUNT CREATE BLOCK");
             self.block_sender
                 .as_ref()
                 .unwrap()
@@ -153,6 +154,7 @@ impl TransactionGenerator {
                 transactions.push(txn);
             }
 
+            println!("SEND MINT BLOCK");
             self.block_sender
                 .as_ref()
                 .unwrap()
@@ -163,6 +165,7 @@ impl TransactionGenerator {
 
     /// Generates transactions for random pairs of accounts.
     fn gen_transfer_transactions(&mut self, block_size: usize, num_blocks: usize) {
+        println!("NUM BLOCKS: {}", num_blocks);
         for _i in 0..num_blocks {
             let mut transactions = Vec::with_capacity(block_size);
             for _j in 0..block_size {
@@ -190,6 +193,7 @@ impl TransactionGenerator {
                 self.accounts[sender_idx].sequence_number += 1;
             }
 
+            println!("SEND TRANSFER BLOCK");
             self.block_sender
                 .as_ref()
                 .unwrap()

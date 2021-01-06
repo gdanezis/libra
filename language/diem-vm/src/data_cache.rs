@@ -22,6 +22,9 @@ use move_vm_runtime::data_cache::RemoteCache;
 use std::collections::btree_map::BTreeMap;
 use vm::errors::*;
 
+use std::sync::Mutex;
+use std::collections::HashSet;
+
 
 /// A local cache for a given a `StateView`. The cache is private to the Diem layer
 /// but can be used as a one shot cache for systems that need a simple `RemoteCache`
@@ -39,6 +42,7 @@ use vm::errors::*;
 pub struct StateViewCache<'a> {
     pub data_view: &'a dyn StateView,
     data_map: BTreeMap<AccessPath, Option<Vec<u8>>>,
+    reads : Mutex<HashSet<AccessPath>>,
 }
 
 unsafe impl<'a> Sync for StateViewCache<'a> {}
@@ -50,11 +54,12 @@ impl<'a> StateViewCache<'a> {
         StateViewCache {
             data_view,
             data_map: BTreeMap::new(),
+            reads : Mutex::new(HashSet::new()),
         }
     }
 
     pub fn read_set(&self) -> Vec<AccessPath> {
-        self.data_map.keys().cloned().collect()
+        self.reads.lock().unwrap().iter().cloned().collect()
     }
 
     // Publishes a `WriteSet` computed at the end of a transaction.
@@ -82,6 +87,7 @@ impl<'block> StateView for StateViewCache<'block> {
             "Injected failure in data_cache::get"
         )));
 
+        self.reads.lock().unwrap().insert(access_path.clone());
         match self.data_map.get(access_path) {
             Some(opt_data) => Ok(opt_data.clone()),
             None => match self.data_view.get(&access_path) {
