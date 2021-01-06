@@ -638,6 +638,7 @@ impl DiemVM {
         &mut self,
         transactions: Vec<Transaction>,
         data_cache: &mut StateViewCache,
+        parallel : bool,
     ) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus> {
         let count = transactions.len();
         let mut result = vec![];
@@ -657,112 +658,162 @@ impl DiemVM {
             // Verify the signatures of all the transactions in parallel.
             // This is time consuming so don't wait and do the checking
             // sequentially while executing the transactions.
-            signature_verified_block = transactions
+            signature_verified_block = transactions.clone()
                 .into_par_iter()
                 .map(preprocess_transaction)
                 .collect();
         }
 
-        let parallel = (num_txns == 10000);
         if parallel {
+
+            let mut read_write_infer = HashMap::<Vec<u8>, ScriptReadWriteSet>::new();
+            let mut versioning = HashMap::new();
+            let mut max_dependency = 0;
+
+            let mut transaction_schedule = HashMap::new();
+
+            // Check the first transaction
+            for txn in &signature_verified_block {
+                if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
+                    match user_txn.payload() {
+                        TransactionPayload::Script(script) => {
+
+                            // If the transaction is not known, then execute it to infer its read/write logic.
+                            if !read_write_infer.contains_key(script.code()) {
+                                println!("COMPUTE READ/WRITE SET");
+                                let xref = &*data_cache;
+                                let local_state_view_cache = StateViewCache::new(xref);
+                                let log_context = AdapterLogSchema::new(xref.id(), 0);
+                                // Execute the transaction
+                                if let Ok((vm_status, output, sender)) = self.execute_single_txn(&local_state_view_cache, txn, &log_context)
+                                {
+                                    // Record the read-set
+                                    let read_set = local_state_view_cache.read_set();
+
+                                    // Create a params list
+                                    let mut params = vec![ user_txn.sender() ];
+                                    for arg in script.args() {
+                                        match arg {
+                                            TransactionArgument::Address(address) =>
+                                            {
+                                                params.push(address.clone());
+                                            },
+                                            _ => {},
+                                        };
+                                    }
+
+                                    let mut reads = Vec::new();
+                                    let mut writes = Vec::new();
+                                    let write_set : HashSet<AccessPath> = output.write_set().iter().map(|(k,_)| { k }).cloned().collect();
+                                    //println!("Params: {:?}", params);
+                                    for path in read_set {
+                                        if write_set.contains(&path){
+                                            reads.push(path.clone());
+                                            writes.push(path.clone());
+                                            //println!("  -W {}", path);
+                                        }
+                                        else
+                                        {
+                                            writes.push(path.clone());
+                                            //println!("  -R {}", path);
+                                        }
+                                    }
+
+                                    read_write_infer.insert(script.code().to_vec(), ScriptReadWriteSet::new(params, reads, writes));
+                                }
+                                else
+                                {
+                                    panic!("NO LOGIC TO INFER READ/WRITE SET");
+                                }
+                            }
+
+                            let mut params = vec![ user_txn.sender() ];
+                            for arg in script.args() {
+                                match arg {
+                                    TransactionArgument::Address(address) =>
+                                    {
+                                        params.push(address.clone());
+                                    },
+                                    _ => {},
+                                };
+                            }
+
+                            // Create the dependency structure
+                            let deps = read_write_infer.get(script.code()).unwrap();
+                            let mut max_read = 0;
+                            for r in deps.reads(&params){
+                                max_read = max(max_read, *versioning.entry(r).or_insert(0));
+                            }
+
+                            for w in deps.writes(&params) {
+                                *versioning.entry(w).or_insert(max_read + 1) = max_read + 1;
+                            }
+                            // println!("Max write version: {}", max_read+1);
+
+
+                            let mut dep_transactions = transaction_schedule.entry(max_read+1).or_insert(Vec::new());
+                            dep_transactions.push(txn);
+
+                            max_dependency = max(max_dependency, max_read+1);
+
+                        },
+                        _ => {
+                            println!("NON SCIPT TRANSACTION");
+                            return self.execute_block_impl(transactions, data_cache, false);
+                        }
+                    }
+                }
+                else
+                {
+                    println!("NON USER TRANSACTION");
+                    return self.execute_block_impl(transactions, data_cache, false);
+                }
+            }
+
+            println!("Max dependency: {}", max_dependency);
+            if max_dependency > 40 {
+                println!("REVERT TO SEQUENTIAL");
+                return self.execute_block_impl(transactions, data_cache, false);
+            }
+
 
             let mut discarded = 0;
             let mut exec_step = 0;
-            while signature_verified_block.len() != 0 {
-                println!("EXEC_STEP {} TX: {}", exec_step, signature_verified_block.len());
+            loop {
+
+                let current_level = transaction_schedule.keys().min();
+                let level = match current_level {
+                    None => break,
+                    Some(level) => level.clone(),
+                };
+
+                let current_processed_transactions = transaction_schedule.remove(&level).unwrap();
+
+                println!("EXEC_STEP {} TX: {}", exec_step, current_processed_transactions.len());
                 let xref = &*data_cache;
                 let mut inner_results = Vec::new();
                 let ref_vm = &*self;
-                inner_results = signature_verified_block.par_iter().enumerate().chunks(10).flat_map_iter(|txn_batch| {
-                    // Gives us a small block of transactions
-                    let mut results = Vec::new();
-                    for (idx, txn) in txn_batch {
+                inner_results = current_processed_transactions.par_iter().enumerate().map(
+                    |(idx, txn)| {
+
                         // Make a fresh data cache using the overall data cache underneath.
-                        let local_state_view_cache = StateViewCache::new(xref);
+                        //let local_state_view_cache = StateViewCache::new(xref);
                         let log_context = AdapterLogSchema::new(xref.id(), idx);
                         // Execute the transaction
-                        let res = ref_vm.execute_single_txn(&local_state_view_cache, txn, &log_context);
+                        let res = ref_vm.execute_single_txn(&xref, txn, &log_context);
                         // Record the read-set
-                        let read_set = local_state_view_cache.read_set();
-                        results.push((res, read_set));
-                    }
-                    results
+                        //let read_set = local_state_view_cache.read_set();
+                        res
+
                 }).collect();
 
-                let mut hist = HashMap::new();
-                let mut remaining_txs = Vec::with_capacity(signature_verified_block.len());
-                for ((res, read_set), txn) in inner_results.into_iter().zip(signature_verified_block.into_iter()) {
+                for (res, txn) in inner_results.into_iter().zip(current_processed_transactions.into_iter()) {
                     match res {
                         Ok((vm_status, output, sender)) => {
-                            // Check if there is a 'dirty' read
-                            let mut dep_read = 0;
-                            for path in read_set.clone() {
-                                dep_read = max(dep_read, *hist.entry(path).or_insert(0));
-                            }
-                            // If there is a dirsty read, we need to re-run this transaction later
-                            if dep_read != 0 {
-                                remaining_txs.push(txn);
-                                //println!("Defer.");
-
-                                if !output.status().is_discarded() {
-                                    // If this was to be successful, then bump the history
-                                    // to defer dependent transactions.
-                                    for (ap, _) in output.write_set() {
-                                        *hist.entry(ap.clone()).or_insert(0) += 1;
-                                    }
-                                }
-                                continue
-                            }
 
                             if !output.status().is_discarded() {
                                 //println!("Commit. Read-set {}: {:?}", read_set.len(), output.status());
                                 // Make a historgram of paths, and how many times they are written to.
-                                for (ap, _) in output.write_set() {
-                                    *hist.entry(ap.clone()).or_insert(0) += 1;
-                                }
-
-                                let print_read_write_set = false;
-                                if print_read_write_set {
-
-                                    let write_set : HashSet<AccessPath> = output.write_set().iter().map(|(k,_)| { k }).cloned().collect();
-                                    println!("TRANSACTION:");
-
-                                    if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
-                                        match user_txn.payload() {
-                                            TransactionPayload::Script(script) => {
-                                                // load sender to cache
-                                                println!("    Sender: {}", user_txn.sender());
-                                                // to_cache.push(AccessPath::new(txn.sender(), vec![]));
-                                                // data_cache.get(&AccessPath::new(txn.sender(), vec![]));
-                                                // extract arguments of type Address and load to cache
-
-                                                for arg in script.args() {
-                                                    match arg {
-                                                        TransactionArgument::Address(address) =>
-                                                        {
-                                                            println!("    Address: {}", address);
-                                                        },
-                                                        x => {
-                                                            println!("    Other: {:?}", x);
-                                                        },
-                                                    };
-                                                }
-                                            },
-                                            _ => {}
-                                        }
-                                    }
-
-                                    for path in read_set {
-                                        if write_set.contains(&path){
-                                            println!("  -W {}", path);
-                                        }
-                                        else
-                                        {
-                                            println!("  -R {}", path);
-                                        }
-                                    }
-                                }
-
 
                                 // Commit the results to the data cache
                                 data_cache.push_write_set(output.write_set());
@@ -770,9 +821,8 @@ impl DiemVM {
                             }
                             else {
                                 discarded += 1;
-                                //println!("Error: {:?} read-set {}", output.status(), read_set.len());
+                                // println!("Error: {:?} read-set {}", output.status(), read_set.len());
                                 // println!("Read Set len: {} -- {:?}", read_set.len(), read_set);
-
 
                                 result.push((vm_status, output));
                             }
@@ -782,7 +832,7 @@ impl DiemVM {
                         }
                     }
                 }
-                signature_verified_block = remaining_txs;
+                // signature_verified_block = remaining_txs;
                 exec_step +=1;
             }
             println!("Discarded {}", discarded);
@@ -848,7 +898,7 @@ impl DiemVM {
     ) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus> {
         let mut state_view_cache = StateViewCache::new(state_view);
         let mut vm = DiemVM::new(&state_view_cache);
-        vm.execute_block_impl(transactions, &mut state_view_cache)
+        vm.execute_block_impl(transactions, &mut state_view_cache, true)
     }
 }
 
@@ -1003,7 +1053,7 @@ impl ScriptReadWriteSet {
 
     // Return the read access paths specialized for these parameters
     // TODO: return a result in case the params are not long enough.
-    pub fn reads(&self, params : Vec<AccountAddress>) -> Vec<AccessPath> {
+    pub fn reads(&self, params : &Vec<AccountAddress>) -> Vec<AccessPath> {
         self.reads.iter().cloned().map(|(v, mut p)| {
             match v {
                 ScriptReadWriteSetVar::Const => p,
@@ -1017,7 +1067,7 @@ impl ScriptReadWriteSet {
 
     // Return the write access paths specialized for these parameters
     // TODO: return a result in case the params are not long enough.
-    pub fn writes(&self, params : Vec<AccountAddress>) -> Vec<AccessPath> {
+    pub fn writes(&self, params : &Vec<AccountAddress>) -> Vec<AccessPath> {
         self.writes.iter().cloned().map(|(v, mut p)| {
             match v {
                 ScriptReadWriteSetVar::Const => p,

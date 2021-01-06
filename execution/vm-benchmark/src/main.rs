@@ -27,10 +27,12 @@ fn main() {
 
     diem_logger::Logger::new().init();
 
+    /*
     rayon::ThreadPoolBuilder::new()
     .thread_name(|index| format!("rayon-global-{}", index))
     .build_global()
     .expect("Failed to build rayon global thread pool.");
+    */
 
     vm_benchmark::run_benchmark(
         opt.num_accounts,
