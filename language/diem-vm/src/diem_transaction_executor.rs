@@ -634,16 +634,89 @@ impl DiemVM {
         Ok((vm_status, output, sender))
     }
 
-    fn execute_block_impl(
+    fn execute_block_impl_sequential(
         &mut self,
         transactions: Vec<Transaction>,
-        data_cache: &mut StateViewCache,
-        parallel : bool,
+        data_cache: &mut StateViewCache
     ) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus> {
         let count = transactions.len();
         let mut result = vec![];
-        // let mut current_block_id;
-        // let mut execute_block_trace_guard = vec![];
+        let mut should_restart = false;
+
+        info!(
+            AdapterLogSchema::new(data_cache.id(), 0),
+            "Executing block, transaction count: {}",
+            transactions.len()
+        );
+
+        let num_txns = transactions.len();
+        let mut signature_verified_block: Vec<Result<PreprocessedTransaction, VMStatus>>;
+        {
+            // Verify the signatures of all the transactions in parallel.
+            // This is time consuming so don't wait and do the checking
+            // sequentially while executing the transactions.
+            signature_verified_block = transactions.clone()
+                .into_par_iter()
+                .map(preprocess_transaction)
+                .collect();
+        }
+        for (idx, txn) in signature_verified_block.into_iter().enumerate() {
+            let log_context = AdapterLogSchema::new(data_cache.id(), idx);
+            if should_restart {
+                let txn_output = TransactionOutput::new(
+                    WriteSet::default(),
+                    vec![],
+                    0,
+                    TransactionStatus::Retry,
+                );
+                result.push((VMStatus::Error(StatusCode::UNKNOWN_STATUS), txn_output));
+                debug!(log_context, "Retry after reconfiguration");
+                continue;
+            };
+            let (vm_status, output, sender) = self.execute_single_txn(data_cache, &txn, &log_context)?;
+            if !output.status().is_discarded() {
+                data_cache.push_write_set(output.write_set());
+            } else {
+                match sender {
+                    Some(s) => trace!(
+                        log_context,
+                        "Transaction discarded, sender: {}, error: {:?}",
+                        s,
+                        vm_status,
+                    ),
+                    None => trace!(log_context, "Transaction malformed, error: {:?}", vm_status,),
+                }
+            }
+
+            if is_reconfiguration(&output) {
+                info!(
+                    AdapterLogSchema::new(data_cache.id(), 0),
+                    "Reconfiguration occurred: restart required",
+                );
+                should_restart = true;
+            }
+
+            // `result` is initially empty, a single element is pushed per loop iteration and
+            // the number of iterations is bound to the max size of `signature_verified_block`
+            assume!(result.len() < usize::max_value());
+            result.push((vm_status, output))
+        }
+
+        // Record the histogram count for transactions per block.
+        BLOCK_TRANSACTION_COUNT.observe(count as f64);
+
+        println!("RETURN {} resutls", result.len());
+        Ok(result)
+
+    }
+
+    fn execute_block_impl_parallel(
+        &mut self,
+        transactions: Vec<Transaction>,
+        data_cache: &mut StateViewCache
+    ) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus> {
+        let count = transactions.len();
+        let mut result = vec![];
         let mut should_restart = false;
 
         info!(
@@ -664,230 +737,191 @@ impl DiemVM {
                 .collect();
         }
 
-        if parallel {
+        let mut read_write_infer = HashMap::<Vec<u8>, ScriptReadWriteSet>::new();
+        let mut versioning = HashMap::new();
+        let mut max_dependency = 0;
 
-            let mut read_write_infer = HashMap::<Vec<u8>, ScriptReadWriteSet>::new();
-            let mut versioning = HashMap::new();
-            let mut max_dependency = 0;
+        let mut transaction_schedule = HashMap::new();
 
-            let mut transaction_schedule = HashMap::new();
+        // Check the first transaction
+        for txn in &signature_verified_block {
+            if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
+                match user_txn.payload() {
+                    TransactionPayload::Script(script) => {
 
-            // Check the first transaction
-            for txn in &signature_verified_block {
-                if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
-                    match user_txn.payload() {
-                        TransactionPayload::Script(script) => {
+                        // If the transaction is not known, then execute it to infer its read/write logic.
+                        if !read_write_infer.contains_key(script.code()) {
+                            println!("COMPUTE READ/WRITE SET");
+                            let xref = &*data_cache;
+                            let local_state_view_cache = StateViewCache::new(xref);
+                            let log_context = AdapterLogSchema::new(xref.id(), 0);
+                            // Execute the transaction
+                            if let Ok((vm_status, output, sender)) = self.execute_single_txn(&local_state_view_cache, txn, &log_context)
+                            {
+                                // Record the read-set
+                                let read_set = local_state_view_cache.read_set();
 
-                            // If the transaction is not known, then execute it to infer its read/write logic.
-                            if !read_write_infer.contains_key(script.code()) {
-                                println!("COMPUTE READ/WRITE SET");
-                                let xref = &*data_cache;
-                                let local_state_view_cache = StateViewCache::new(xref);
-                                let log_context = AdapterLogSchema::new(xref.id(), 0);
-                                // Execute the transaction
-                                if let Ok((vm_status, output, sender)) = self.execute_single_txn(&local_state_view_cache, txn, &log_context)
-                                {
-                                    // Record the read-set
-                                    let read_set = local_state_view_cache.read_set();
-
-                                    // Create a params list
-                                    let mut params = vec![ user_txn.sender() ];
-                                    for arg in script.args() {
-                                        match arg {
-                                            TransactionArgument::Address(address) =>
-                                            {
-                                                params.push(address.clone());
-                                            },
-                                            _ => {},
-                                        };
-                                    }
-
-                                    let mut reads = Vec::new();
-                                    let mut writes = Vec::new();
-                                    let write_set : HashSet<AccessPath> = output.write_set().iter().map(|(k,_)| { k }).cloned().collect();
-                                    //println!("Params: {:?}", params);
-                                    for path in read_set {
-                                        if write_set.contains(&path){
-                                            reads.push(path.clone());
-                                            writes.push(path.clone());
-                                            //println!("  -W {}", path);
-                                        }
-                                        else
+                                // Create a params list
+                                let mut params = vec![ user_txn.sender() ];
+                                for arg in script.args() {
+                                    match arg {
+                                        TransactionArgument::Address(address) =>
                                         {
-                                            writes.push(path.clone());
-                                            //println!("  -R {}", path);
-                                        }
+                                            params.push(address.clone());
+                                        },
+                                        _ => {},
+                                    };
+                                }
+
+                                let mut reads = Vec::new();
+                                let mut writes = Vec::new();
+                                let write_set : HashSet<AccessPath> = output.write_set().iter().map(|(k,_)| { k }).cloned().collect();
+                                //println!("Params: {:?}", params);
+                                for path in read_set {
+                                    if write_set.contains(&path){
+                                        reads.push(path.clone());
+                                        writes.push(path.clone());
+                                        //println!("  -W {}", path);
                                     }
-
-                                    read_write_infer.insert(script.code().to_vec(), ScriptReadWriteSet::new(params, reads, writes));
-                                }
-                                else
-                                {
-                                    panic!("NO LOGIC TO INFER READ/WRITE SET");
-                                }
-                            }
-
-                            let mut params = vec![ user_txn.sender() ];
-                            for arg in script.args() {
-                                match arg {
-                                    TransactionArgument::Address(address) =>
+                                    else
                                     {
-                                        params.push(address.clone());
-                                    },
-                                    _ => {},
-                                };
+                                        writes.push(path.clone());
+                                        //println!("  -R {}", path);
+                                    }
+                                }
+
+                                read_write_infer.insert(script.code().to_vec(), ScriptReadWriteSet::new(params, reads, writes));
                             }
-
-                            // Create the dependency structure
-                            let deps = read_write_infer.get(script.code()).unwrap();
-                            let mut max_read = 0;
-                            for r in deps.reads(&params){
-                                max_read = max(max_read, *versioning.entry(r).or_insert(0));
+                            else
+                            {
+                                panic!("NO LOGIC TO INFER READ/WRITE SET");
                             }
-
-                            for w in deps.writes(&params) {
-                                *versioning.entry(w).or_insert(max_read + 1) = max_read + 1;
-                            }
-                            // println!("Max write version: {}", max_read+1);
-
-
-                            let mut dep_transactions = transaction_schedule.entry(max_read+1).or_insert(Vec::new());
-                            dep_transactions.push(txn);
-
-                            max_dependency = max(max_dependency, max_read+1);
-
-                        },
-                        _ => {
-                            println!("NON SCIPT TRANSACTION");
-                            return self.execute_block_impl(transactions, data_cache, false);
                         }
+
+                        let mut params = vec![ user_txn.sender() ];
+                        for arg in script.args() {
+                            match arg {
+                                TransactionArgument::Address(address) =>
+                                {
+                                    params.push(address.clone());
+                                },
+                                _ => {},
+                            };
+                        }
+
+                        // Create the dependency structure
+                        let deps = read_write_infer.get(script.code()).unwrap();
+                        let mut max_read = 0;
+                        for r in deps.reads(&params){
+                            max_read = max(max_read, *versioning.entry(r).or_insert(0));
+                        }
+
+                        for w in deps.writes(&params) {
+                            *versioning.entry(w).or_insert(max_read + 1) = max_read + 1;
+                        }
+                        // println!("Max write version: {}", max_read+1);
+
+
+                        let mut dep_transactions = transaction_schedule.entry(max_read+1).or_insert(Vec::new());
+                        dep_transactions.push(txn);
+
+                        max_dependency = max(max_dependency, max_read+1);
+
+                    },
+                    _ => {
+                        println!("NON SCIPT TRANSACTION");
+                        return self.execute_block_impl(transactions, data_cache, false);
                     }
                 }
-                else
-                {
-                    println!("NON USER TRANSACTION");
-                    return self.execute_block_impl(transactions, data_cache, false);
-                }
             }
-
-            println!("Max dependency: {}", max_dependency);
-            if max_dependency > 40 {
-                println!("REVERT TO SEQUENTIAL");
+            else
+            {
+                println!("NON USER TRANSACTION");
                 return self.execute_block_impl(transactions, data_cache, false);
             }
-
-
-            let mut discarded = 0;
-            let mut exec_step = 0;
-            loop {
-
-                let current_level = transaction_schedule.keys().min();
-                let level = match current_level {
-                    None => break,
-                    Some(level) => level.clone(),
-                };
-
-                let current_processed_transactions = transaction_schedule.remove(&level).unwrap();
-
-                println!("EXEC_STEP {} TX: {}", exec_step, current_processed_transactions.len());
-                let xref = &*data_cache;
-                let mut inner_results = Vec::new();
-                let ref_vm = &*self;
-                inner_results = current_processed_transactions.par_iter().enumerate().map(
-                    |(idx, txn)| {
-
-                        // Make a fresh data cache using the overall data cache underneath.
-                        //let local_state_view_cache = StateViewCache::new(xref);
-                        let log_context = AdapterLogSchema::new(xref.id(), idx);
-                        // Execute the transaction
-                        let res = ref_vm.execute_single_txn(&xref, txn, &log_context);
-                        // Record the read-set
-                        //let read_set = local_state_view_cache.read_set();
-                        res
-
-                }).collect();
-
-                for (res, txn) in inner_results.into_iter().zip(current_processed_transactions.into_iter()) {
-                    match res {
-                        Ok((vm_status, output, sender)) => {
-
-                            if !output.status().is_discarded() {
-                                //println!("Commit. Read-set {}: {:?}", read_set.len(), output.status());
-                                // Make a historgram of paths, and how many times they are written to.
-
-                                // Commit the results to the data cache
-                                data_cache.push_write_set(output.write_set());
-                                result.push((vm_status, output))
-                            }
-                            else {
-                                discarded += 1;
-                                // println!("Error: {:?} read-set {}", output.status(), read_set.len());
-                                // println!("Read Set len: {} -- {:?}", read_set.len(), read_set);
-
-                                result.push((vm_status, output));
-                            }
-                        },
-                        Err(e) => {
-                            return Err(e);
-                        }
-                    }
-                }
-                // signature_verified_block = remaining_txs;
-                exec_step +=1;
-            }
-            println!("Discarded {}", discarded);
-
-        } else {
-
-            for (idx, txn) in signature_verified_block.into_iter().enumerate() {
-                let log_context = AdapterLogSchema::new(data_cache.id(), idx);
-                if should_restart {
-                    let txn_output = TransactionOutput::new(
-                        WriteSet::default(),
-                        vec![],
-                        0,
-                        TransactionStatus::Retry,
-                    );
-                    result.push((VMStatus::Error(StatusCode::UNKNOWN_STATUS), txn_output));
-                    debug!(log_context, "Retry after reconfiguration");
-                    continue;
-                };
-                let (vm_status, output, sender) = self.execute_single_txn(data_cache, &txn, &log_context)?;
-                if !output.status().is_discarded() {
-                    data_cache.push_write_set(output.write_set());
-                } else {
-                    match sender {
-                        Some(s) => trace!(
-                            log_context,
-                            "Transaction discarded, sender: {}, error: {:?}",
-                            s,
-                            vm_status,
-                        ),
-                        None => trace!(log_context, "Transaction malformed, error: {:?}", vm_status,),
-                    }
-                }
-
-                if is_reconfiguration(&output) {
-                    info!(
-                        AdapterLogSchema::new(data_cache.id(), 0),
-                        "Reconfiguration occurred: restart required",
-                    );
-                    should_restart = true;
-                }
-
-                // `result` is initially empty, a single element is pushed per loop iteration and
-                // the number of iterations is bound to the max size of `signature_verified_block`
-                assume!(result.len() < usize::max_value());
-                result.push((vm_status, output))
-            }
-
         }
+
+        println!("Max dependency: {}", max_dependency);
+        if max_dependency > 40 {
+            println!("REVERT TO SEQUENTIAL");
+            return self.execute_block_impl(transactions, data_cache, false);
+        }
+
+
+        let mut discarded = 0;
+        let mut exec_step = 0;
+        loop {
+
+            let current_level = transaction_schedule.keys().min();
+            let level = match current_level {
+                None => break,
+                Some(level) => level.clone(),
+            };
+
+            let current_processed_transactions = transaction_schedule.remove(&level).unwrap();
+
+            println!("EXEC_STEP {} TX: {}", exec_step, current_processed_transactions.len());
+            let xref = &*data_cache;
+            let mut inner_results = Vec::new();
+            let ref_vm = &*self;
+            inner_results = current_processed_transactions.par_iter().enumerate().map(
+                |(idx, txn)| {
+
+                    // Make a fresh data cache using the overall data cache underneath.
+                    //let local_state_view_cache = StateViewCache::new(xref);
+                    let log_context = AdapterLogSchema::new(xref.id(), idx);
+                    // Execute the transaction
+                    let res = ref_vm.execute_single_txn(&xref, txn, &log_context);
+                    res
+
+            }).collect();
+
+            for (res, txn) in inner_results.into_iter().zip(current_processed_transactions.into_iter()) {
+                match res {
+                    Ok((vm_status, output, sender)) => {
+
+                        if !output.status().is_discarded() {
+                            // Commit the results to the data cache
+                            data_cache.push_write_set(output.write_set());
+                            result.push((vm_status, output))
+                        }
+                        else {
+                            discarded += 1;
+                            result.push((vm_status, output));
+                        }
+                    },
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
+            }
+            // signature_verified_block = remaining_txs;
+            exec_step +=1;
+        }
+        println!("Discarded {}", discarded);
+
+
 
         // Record the histogram count for transactions per block.
         BLOCK_TRANSACTION_COUNT.observe(count as f64);
 
         println!("RETURN {} resutls", result.len());
         Ok(result)
+    }
+
+    fn execute_block_impl(
+        &mut self,
+        transactions: Vec<Transaction>,
+        data_cache: &mut StateViewCache,
+        parallel : bool,
+    ) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus> {
+        if parallel {
+            self.execute_block_impl_parallel(transactions, data_cache)
+        }
+        else
+        {
+            self.execute_block_impl_sequential(transactions, data_cache)
+        }
     }
 
     /// Alternate form of 'execute_block' that keeps the vm_status before it goes into the
