@@ -726,6 +726,8 @@ impl DiemVM {
         );
 
         let num_txns = transactions.len();
+
+        let execute_start = std::time::Instant::now();
         let mut signature_verified_block: Vec<Result<PreprocessedTransaction, VMStatus>>;
         {
             // Verify the signatures of all the transactions in parallel.
@@ -737,13 +739,25 @@ impl DiemVM {
                 .collect();
         }
 
+        let execute_time = std::time::Instant::now().duration_since(execute_start);
+
+        info!(
+            "Check Signatures. Execute time: {} ms. TPS: {}.",
+            execute_time.as_millis(),
+            num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
+        );
+
         let mut read_write_infer = HashMap::<Vec<u8>, ScriptReadWriteSet>::new();
         let mut versioning = HashMap::new();
         let mut max_dependency = 0;
 
         let mut transaction_schedule = HashMap::new();
 
+
+        let execute_start = std::time::Instant::now();
+
         // Check the first transaction
+        let mut params = Vec::with_capacity(20);
         for txn in &signature_verified_block {
             if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
                 match user_txn.payload() {
@@ -798,15 +812,13 @@ impl DiemVM {
                             }
                         }
 
-                        let mut params = vec![ user_txn.sender() ];
+                        params.clear();
+                        params.push(user_txn.sender() );
                         for arg in script.args() {
-                            match arg {
-                                TransactionArgument::Address(address) =>
-                                {
+                            if let TransactionArgument::Address(address) = arg
+                            {
                                     params.push(address.clone());
-                                },
-                                _ => {},
-                            };
+                            }
                         }
 
                         // Create the dependency structure
@@ -819,10 +831,8 @@ impl DiemVM {
                         for w in deps.writes(&params) {
                             *versioning.entry(w).or_insert(max_read + 1) = max_read + 1;
                         }
-                        // println!("Max write version: {}", max_read+1);
 
-
-                        let mut dep_transactions = transaction_schedule.entry(max_read+1).or_insert(Vec::new());
+                        let mut dep_transactions = transaction_schedule.entry(max_read+1).or_insert_with(|| { Vec::new() });
                         dep_transactions.push(txn);
 
                         max_dependency = max(max_dependency, max_read+1);
@@ -841,6 +851,15 @@ impl DiemVM {
             }
         }
 
+        let execute_time = std::time::Instant::now().duration_since(execute_start);
+
+        info!(
+            "Schedule. Execute time: {} ms. TPS: {}.",
+            execute_time.as_millis(),
+            num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
+        );
+
+
         println!("Max dependency: {}", max_dependency);
         if max_dependency > 40 {
             println!("REVERT TO SEQUENTIAL");
@@ -852,6 +871,8 @@ impl DiemVM {
         let mut exec_step = 0;
         loop {
 
+            let execute_start = std::time::Instant::now();
+
             let current_level = transaction_schedule.keys().min();
             let level = match current_level {
                 None => break,
@@ -859,11 +880,12 @@ impl DiemVM {
             };
 
             let current_processed_transactions = transaction_schedule.remove(&level).unwrap();
+            let inner_tx_num = current_processed_transactions.len();
 
             println!("EXEC_STEP {} TX: {}", exec_step, current_processed_transactions.len());
             let xref = &*data_cache;
             let mut inner_results = Vec::new();
-            let ref_vm = &*self;
+            // let ref_vm = &*self;
             inner_results = current_processed_transactions.par_iter().enumerate().map(
                 |(idx, txn)| {
 
@@ -871,11 +893,22 @@ impl DiemVM {
                     //let local_state_view_cache = StateViewCache::new(xref);
                     let log_context = AdapterLogSchema::new(xref.id(), idx);
                     // Execute the transaction
-                    let res = ref_vm.execute_single_txn(&xref, txn, &log_context);
+                    let res = self.execute_single_txn(&xref, txn, &log_context);
                     res
 
             }).collect();
 
+            let execute_time = std::time::Instant::now().duration_since(execute_start);
+
+
+            info!(
+                "Execute. Execute time: {} ms. TPS: {}.",
+                execute_time.as_millis(),
+                inner_tx_num as u128 * 1_000_000_000 / execute_time.as_nanos(),
+            );
+
+
+            let execute_start = std::time::Instant::now();
             for (res, txn) in inner_results.into_iter().zip(current_processed_transactions.into_iter()) {
                 match res {
                     Ok((vm_status, output, sender)) => {
@@ -895,6 +928,16 @@ impl DiemVM {
                     }
                 }
             }
+
+            let execute_time = std::time::Instant::now().duration_since(execute_start);
+
+
+            info!(
+                "Commit. Execute time: {} ms. TPS: {}.",
+                execute_time.as_millis(),
+                inner_tx_num as u128 * 1_000_000_000 / execute_time.as_nanos(),
+            );
+
             // signature_verified_block = remaining_txs;
             exec_step +=1;
         }
@@ -1087,7 +1130,9 @@ impl ScriptReadWriteSet {
 
     // Return the read access paths specialized for these parameters
     // TODO: return a result in case the params are not long enough.
-    pub fn reads(&self, params : &Vec<AccountAddress>) -> Vec<AccessPath> {
+    pub fn reads<'a>(&'a self, params : &'a Vec<AccountAddress>) -> ScriptReadWriteSetVarIter {
+        return ScriptReadWriteSetVarIter::new(&self.reads, params);
+        /*
         self.reads.iter().cloned().map(|(v, mut p)| {
             match v {
                 ScriptReadWriteSetVar::Const => p,
@@ -1097,11 +1142,14 @@ impl ScriptReadWriteSet {
                 },
             }
         } ).collect()
+        */
     }
 
     // Return the write access paths specialized for these parameters
     // TODO: return a result in case the params are not long enough.
-    pub fn writes(&self, params : &Vec<AccountAddress>) -> Vec<AccessPath> {
+    pub fn writes<'a>(&'a self, params : &'a Vec<AccountAddress>) -> ScriptReadWriteSetVarIter<'a> {
+        return ScriptReadWriteSetVarIter::new(&self.writes, params);
+        /*
         self.writes.iter().cloned().map(|(v, mut p)| {
             match v {
                 ScriptReadWriteSetVar::Const => p,
@@ -1111,6 +1159,55 @@ impl ScriptReadWriteSet {
                 },
             }
         } ).collect()
+        */
     }
 
+
+}
+
+
+pub struct ScriptReadWriteSetVarIter<'a> {
+    // A link to the array we iterate over
+    array : &'a Vec<(ScriptReadWriteSetVar, AccessPath)>,
+    // The parameters we use to popular the read-write set
+    params: &'a Vec<AccountAddress>,
+    // the position we are in the array.
+    seq: usize,
+}
+
+impl<'a> ScriptReadWriteSetVarIter<'a> {
+    fn new(array : &'a Vec<(ScriptReadWriteSetVar, AccessPath)>, params: &'a Vec<AccountAddress>) -> ScriptReadWriteSetVarIter<'a> {
+        ScriptReadWriteSetVarIter {
+            array,
+            params,
+            seq : 0,
+         }
+    }
+}
+
+
+impl<'a> Iterator for ScriptReadWriteSetVarIter<'a> {
+    // we will be counting with usize
+    type Item = AccessPath;
+
+    // next() is the only required method
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.seq < self.array.len() {
+            let (v, p) = &self.array[self.seq];
+            let current_item = match v {
+                ScriptReadWriteSetVar::Const => p.clone(),
+                ScriptReadWriteSetVar::Param(i) => {
+                    let mut p = p.clone();
+                    p.address = self.params[*i];
+                    p
+                },
+            };
+            self.seq += 1;
+            Some(current_item)
+        }
+        else
+        {
+            None
+        }
+    }
 }

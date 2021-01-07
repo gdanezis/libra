@@ -420,7 +420,6 @@ pub(crate) struct Loader {
 
 impl Loader {
     pub(crate) fn new() -> Self {
-        //println!("new loader");
         Self {
             scripts: RwLock::new(ScriptCache::new()),
             module_cache: RwLock::new(ModuleCache::new()),
@@ -455,7 +454,7 @@ impl Loader {
             None => {
                 let ver_script =
                     self.deserialize_and_verify_script(script_blob, data_store, log_context)?;
-                let script = Script::new(ver_script, &hash_value, &self.module_cache.write().unwrap())?;
+                let script = Script::new(ver_script, &hash_value, &self.module_cache.read().unwrap())?;
                 self.scripts
                     .write().unwrap()
                     .insert(hash_value, script)
