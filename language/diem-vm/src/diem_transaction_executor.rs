@@ -46,6 +46,7 @@ use std::{
     convert::{AsMut, AsRef},
 };
 
+use std::sync::Arc;
 use std::cmp::max;
 use std::collections::HashMap;
 
@@ -879,7 +880,7 @@ impl DiemVM {
                 Some(level) => level.clone(),
             };
 
-            let current_processed_transactions = transaction_schedule.remove(&level).unwrap();
+            let mut current_processed_transactions = Arc::new(transaction_schedule.remove(&level).unwrap());
             let inner_tx_num = current_processed_transactions.len();
 
             println!("EXEC_STEP {} TX: {}", exec_step, current_processed_transactions.len());
@@ -907,9 +908,8 @@ impl DiemVM {
                 inner_tx_num as u128 * 1_000_000_000 / execute_time.as_nanos(),
             );
 
-
             let execute_start = std::time::Instant::now();
-            for (res, txn) in inner_results.into_iter().zip(current_processed_transactions.into_iter()) {
+            for res in inner_results.into_iter() {
                 match res {
                     Ok((vm_status, output, sender)) => {
 
