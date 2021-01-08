@@ -1624,7 +1624,7 @@ impl Function {
 
     pub(crate) fn get_resolver_token<'a>(&self, loader: &'a Loader) -> ResolverToken {
 
-        let val = self.flag.load(Ordering::Relaxed);
+        let val = self.flag.load(Ordering::SeqCst);
         if val != 3 {
             // This is not ready so get a token (before changing the state)
             let token = match &self.scope {

@@ -758,8 +758,8 @@ impl DiemVM {
 
         // Check the first transaction
         let mut params = Vec::with_capacity(20);
-        for txn in &signature_verified_block {
-            if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
+        for txn in signature_verified_block.into_iter() {
+            if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = &txn {
                 match user_txn.payload() {
                     TransactionPayload::Script(script) => {
 
@@ -770,7 +770,7 @@ impl DiemVM {
                             let local_state_view_cache = StateViewCache::new(xref);
                             let log_context = AdapterLogSchema::new(xref.id(), 0);
                             // Execute the transaction
-                            if let Ok((vm_status, output, sender)) = self.execute_single_txn(&local_state_view_cache, txn, &log_context)
+                            if let Ok((vm_status, output, sender)) = self.execute_single_txn(&local_state_view_cache, &txn, &log_context)
                             {
                                 // Record the read-set
                                 let read_set = local_state_view_cache.read_set();
