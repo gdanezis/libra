@@ -1,7 +1,7 @@
 // Copyright (c) The Diem Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-#![forbid(unsafe_code)]
+// #![forbid(unsafe_code)]
 
 //! The core Move VM logic.
 //!

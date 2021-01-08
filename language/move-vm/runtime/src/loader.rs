@@ -68,6 +68,10 @@ where
             .get(&key)
             .and_then(|idx| self.binaries.get(*idx))
     }
+
+    fn len(&self) -> usize {
+        self.binaries.len()
+    }
 }
 
 // A script cache is a map from the hash value of a script and the `Script` itself.
@@ -96,6 +100,12 @@ impl ScriptCache {
     }
 }
 
+impl Drop for ScriptCache {
+    fn drop(&mut self) {
+        println!("Script Cache: {} entries", self.scripts.len());
+    }
+}
+
 // A ModuleCache is the core structure in the Loader.
 // It holds all Modules, Types and Functions loaded.
 // Types and Functions are pushed globally to the ModuleCache.
@@ -104,6 +114,15 @@ pub struct ModuleCache {
     modules: BinaryCache<ModuleId, Module>,
     structs: Vec<Arc<StructType>>,
     functions: Vec<Arc<Function>>,
+}
+
+impl Drop for ModuleCache {
+    fn drop(&mut self) {
+        println!("Module Cache:");
+        println!("  - {} modules", self.modules.len());
+        println!("  - {} structs", self.structs.len());
+        println!("  - {} functions", self.functions.len());
+    }
 }
 
 impl ModuleCache {
@@ -919,6 +938,7 @@ impl Loader {
 //
 
 // A simple wrapper for a `Module` or a `Script` in the `Resolver`
+#[derive(Clone)]
 enum BinaryType {
     Module(Arc<Module>),
     Script(Arc<Script>),
@@ -942,6 +962,11 @@ impl<'a> Resolver<'a> {
         let binary = BinaryType::Script(script);
         Self { loader, binary }
     }
+
+    fn for_binary_type(loader: &'a Loader, binary: BinaryType) -> Self {
+        Self { loader, binary }
+    }
+
 
     //
     // Constant resolution
@@ -1444,6 +1469,10 @@ impl Script {
             native,
             scope,
             name,
+
+            // Populate dynamically
+            flag: AtomicUsize::new(0),
+            resolver_token: UnsafeCell::new(None),
         });
 
         Ok(Self {
@@ -1468,12 +1497,30 @@ impl Script {
     }
 }
 
+#[derive(Clone)]
+pub struct ResolverToken {
+    bin_type: BinaryType,
+}
+
+use std::fmt;
+impl Debug for ResolverToken {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "")
+    }
+}
+
 // A simple wrapper for the "owner" of the function (Module or Script)
 #[derive(Debug)]
 enum Scope {
     Module(ModuleId),
     Script(HashValue),
 }
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::UnsafeCell;
+
+unsafe impl Send for Function {}
+unsafe impl Sync for Function {}
 
 // A runtime function
 #[derive(Debug)]
@@ -1487,6 +1534,10 @@ pub(crate) struct Function {
     native: Option<NativeFunction>,
     scope: Scope,
     name: Identifier,
+
+    // Populate dynamically
+    flag: AtomicUsize,
+    resolver_token: UnsafeCell<Option<ResolverToken>>,
 }
 
 impl Function {
@@ -1536,6 +1587,8 @@ impl Function {
             native,
             scope,
             name,
+            flag : AtomicUsize::new(0),
+            resolver_token : UnsafeCell::new(None),
         }
     }
 
@@ -1560,6 +1613,53 @@ impl Function {
                 let script = loader.get_script(script_hash);
                 Resolver::for_script(loader, script)
             }
+        }
+    }
+
+    pub(crate) fn get_resolver_from_token<'a>(&self, token : ResolverToken, loader: &'a Loader) -> Resolver<'a> {
+        Resolver::for_binary_type(loader, token.bin_type)
+    }
+
+
+
+    pub(crate) fn get_resolver_token<'a>(&self, loader: &'a Loader) -> ResolverToken {
+
+        let val = self.flag.load(Ordering::Relaxed);
+        if val != 3 {
+            // This is not ready so get a token (before changing the state)
+            let token = match &self.scope {
+                Scope::Module(module_id) => {
+                    let module = loader.get_module(module_id);
+                    ResolverToken { bin_type : BinaryType::Module(module) }
+                }
+                Scope::Script(script_hash) => {
+                    let script = loader.get_script(script_hash);
+                    ResolverToken { bin_type : BinaryType::Script(script) }
+                }
+            };
+
+            // Spin until we or someone else writes
+            loop {
+                let val = self.flag.compare_and_swap(0, 1, Ordering::Acquire);
+
+                // We have the token so lets proceed and write.
+                if val == 0 {
+                    unsafe {
+                        let exclusive: &mut Option<ResolverToken> = &mut *self.resolver_token.get();
+                        *exclusive = Some(token);
+                    }
+
+                    self.flag.store(3, Ordering::Release);
+                    break;
+                }
+
+                if val == 3 { break }
+            }
+        }
+
+        unsafe {
+            let shared: &Option<ResolverToken> = &*self.resolver_token.get();
+            shared.clone().unwrap()
         }
     }
 

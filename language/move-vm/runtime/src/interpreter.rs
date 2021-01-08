@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    loader::{Function, Loader, Resolver},
+    loader::{Function, Loader, Resolver, ResolverToken},
     logging::LogContext,
     native_functions::FunctionContext,
     trace,
@@ -143,6 +143,7 @@ impl<L: LogContext> Interpreter<L> {
                     .execute_code(&resolver, self, data_store, cost_strategy)
                     .map_err(|err| self.maybe_core_dump(err, &current_frame))?;
             match exit_code {
+                // ---------------------------------
                 ExitCode::Return => {
                     current_frame
                         .locals
@@ -155,6 +156,7 @@ impl<L: LogContext> Interpreter<L> {
                         return Ok(());
                     }
                 }
+                // ---------------------------------
                 ExitCode::Call(fh_idx) => {
                     cost_strategy
                         .charge_instr_with_size(
@@ -184,6 +186,7 @@ impl<L: LogContext> Interpreter<L> {
                     })?;
                     current_frame = frame;
                 }
+                // ---------------------------------
                 ExitCode::CallGeneric(idx) => {
                     resolver
                         .type_params_count(idx)
@@ -663,6 +666,7 @@ struct Frame {
     locals: Locals,
     function: Arc<Function>,
     ty_args: Vec<Type>,
+    resolver_token : Option<ResolverToken>
 }
 
 /// An `ExitCode` from `execute_code_unit`.
@@ -683,8 +687,11 @@ impl Frame {
             locals,
             function,
             ty_args,
+            resolver_token : None,
         }
     }
+
+    fn set_resolver() {}
 
     /// Execute a Move function until a return or a call opcode is found.
     fn execute_code(
@@ -1147,8 +1154,12 @@ impl Frame {
         &self.ty_args
     }
 
-    fn resolver<'a>(&self, loader: &'a Loader) -> Resolver<'a> {
-        self.function.get_resolver(loader)
+    fn resolver<'a>(&mut self, loader: &'a Loader) -> Resolver<'a> {
+        if self.resolver_token.is_none() {
+            self.resolver_token = Some(self.function.get_resolver_token(loader));
+        }
+
+        self.function.get_resolver_from_token(self.resolver_token.clone().unwrap(), loader)
     }
 
     fn location(&self) -> Location {

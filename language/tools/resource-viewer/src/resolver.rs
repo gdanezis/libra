@@ -28,6 +28,12 @@ pub(crate) struct Resolver<'a> {
     cache: ModuleCache,
 }
 
+impl<'a> fmt::Debug for Resolver<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Resolver");
+    }
+}
+
 impl<'a> Resolver<'a> {
     pub fn new(state: &'a dyn RemoteCache, use_stdlib: bool) -> Self {
         let cache = ModuleCache::new();
