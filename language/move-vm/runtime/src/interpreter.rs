@@ -1155,7 +1155,6 @@ impl Frame {
     }
 
     fn resolver<'a>(&mut self, loader: &'a Loader) -> Resolver<'a> {
-
         if self.resolver_token.is_none() {
             self.resolver_token = Some(self.function.get_resolver_token(loader));
         }

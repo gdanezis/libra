@@ -902,7 +902,11 @@ impl Loader {
     //
 
     fn function_at(&self, idx: usize) -> Arc<Function> {
+        let read_lock = self.module_cache.read().unwrap();
+        let fun = read_lock.function_at(idx);
+        fun
 
+        /*
         let mut size;
         loop {
             size = self.flag.load(Ordering::Relaxed);
@@ -946,6 +950,7 @@ impl Loader {
         }
 
         return fun;
+        */
 
     }
 
