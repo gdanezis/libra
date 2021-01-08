@@ -759,8 +759,8 @@ impl DiemVM {
 
         // Check the first transaction
         let mut params = Vec::with_capacity(20);
-        for txn in signature_verified_block.into_iter() {
-            if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = &txn {
+        for txn in signature_verified_block.iter() {
+            if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
                 match user_txn.payload() {
                     TransactionPayload::Script(script) => {
 
@@ -768,10 +768,10 @@ impl DiemVM {
                         if !read_write_infer.contains_key(script.code()) {
                             println!("COMPUTE READ/WRITE SET");
                             let xref = &*data_cache;
-                            let local_state_view_cache = StateViewCache::new(xref);
+                            let local_state_view_cache = StateViewCache::new_recorder(xref);
                             let log_context = AdapterLogSchema::new(xref.id(), 0);
                             // Execute the transaction
-                            if let Ok((vm_status, output, sender)) = self.execute_single_txn(&local_state_view_cache, &txn, &log_context)
+                            if let Ok((vm_status, output, sender)) = self.execute_single_txn(&local_state_view_cache, txn, &log_context)
                             {
                                 // Record the read-set
                                 let read_set = local_state_view_cache.read_set();
@@ -880,7 +880,7 @@ impl DiemVM {
                 Some(level) => level.clone(),
             };
 
-            let mut current_processed_transactions = Arc::new(transaction_schedule.remove(&level).unwrap());
+            let mut current_processed_transactions = transaction_schedule.remove(&level).unwrap();
             let inner_tx_num = current_processed_transactions.len();
 
             println!("EXEC_STEP {} TX: {}", exec_step, current_processed_transactions.len());
@@ -930,7 +930,6 @@ impl DiemVM {
             }
 
             let execute_time = std::time::Instant::now().duration_since(execute_start);
-
 
             info!(
                 "Commit. Execute time: {} ms. TPS: {}.",

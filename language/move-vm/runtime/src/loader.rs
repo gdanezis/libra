@@ -110,33 +110,39 @@ impl Drop for ScriptCache {
 // It holds all Modules, Types and Functions loaded.
 // Types and Functions are pushed globally to the ModuleCache.
 // All accesses to the ModuleCache are under lock (exclusive).
-pub struct ModuleCache {
+
+struct ModuleCache {
     modules: BinaryCache<ModuleId, Module>,
     structs: Vec<Arc<StructType>>,
     functions: Vec<Arc<Function>>,
 }
+/*
+pub struct ModuleCache {
+    pub inner : RwLock<ModuleCacheInner>,
 
-impl Drop for ModuleCache {
-    fn drop(&mut self) {
-        println!("Module Cache:");
-        println!("  - {} modules", self.modules.len());
-        println!("  - {} structs", self.structs.len());
-        println!("  - {} functions", self.functions.len());
-    }
+    pub flag : AtomicUsize,
+    pub read_functions : Arc<Vec<Arc<Function>>>,
 }
+*/
 
 impl ModuleCache {
     fn new() -> Self {
         Self {
-            modules: BinaryCache::new(),
-            structs: vec![],
-            functions: vec![],
+
+                modules: BinaryCache::new(),
+                structs: vec![],
+                functions: vec![],
+
         }
     }
 
     //
     // Common "get" operations
     //
+
+    fn clone_functions(&self) -> Vec<Arc<Function>> {
+        self.functions.clone()
+    }
 
     // Retrieve a module by `ModuleId`. The module may have not been loaded yet in which
     // case `None` is returned
@@ -435,7 +441,15 @@ pub(crate) struct Loader {
     scripts: RwLock<ScriptCache>,
     module_cache: RwLock<ModuleCache>,
     type_cache: RwLock<TypeCache>,
+
+    flag : AtomicUsize,
+    function_read_cache : UnsafeCell<Vec<Arc<Function>>>,
 }
+
+unsafe impl Send for Loader {}
+unsafe impl Sync for Loader {}
+
+const BUSY_FLAG : usize = usize::MAX;
 
 impl Loader {
     pub(crate) fn new() -> Self {
@@ -443,6 +457,9 @@ impl Loader {
             scripts: RwLock::new(ScriptCache::new()),
             module_cache: RwLock::new(ModuleCache::new()),
             type_cache: RwLock::new(TypeCache::new()),
+
+            flag : AtomicUsize::new(0),
+            function_read_cache : UnsafeCell::new(vec![]),
         }
     }
 
@@ -885,7 +902,51 @@ impl Loader {
     //
 
     fn function_at(&self, idx: usize) -> Arc<Function> {
-        self.module_cache.read().unwrap().function_at(idx)
+
+        let mut size;
+        loop {
+            size = self.flag.load(Ordering::Relaxed);
+
+            if idx < size && size != BUSY_FLAG {
+                let prev = self.flag.compare_and_swap(size, BUSY_FLAG, Ordering::Acquire);
+                if prev == size {
+                    let read_vec = unsafe { &*self.function_read_cache.get() };
+                    let fun = Arc::clone(&read_vec[idx]);
+                    self.flag.store(size, Ordering::Release);
+                    return fun;
+                }
+            }
+            if !(idx < size) {
+                break
+            }
+        }
+
+        let read_lock = self.module_cache.read().unwrap();
+        let fun = read_lock.function_at(idx);
+        let new_vec = read_lock.clone_functions();
+
+        loop {
+            size = self.flag.load(Ordering::Relaxed);
+            if size != BUSY_FLAG {
+
+                if new_vec.len() <= size {
+                    break
+                }
+
+                let prev = self.flag.compare_and_swap(size, BUSY_FLAG, Ordering::Acquire);
+                let write_vec = unsafe { &mut *self.function_read_cache.get() };
+
+                let new_size = new_vec.len();
+                *write_vec = new_vec;
+
+                self.flag.store(new_size, Ordering::Release);
+                break
+            }
+
+        }
+
+        return fun;
+
     }
 
     fn struct_at(&self, idx: usize) -> Arc<StructType> {

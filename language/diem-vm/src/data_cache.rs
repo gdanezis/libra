@@ -43,6 +43,7 @@ pub struct StateViewCache<'a> {
     pub data_view: &'a dyn StateView,
     data_map: BTreeMap<AccessPath, Option<Vec<u8>>>,
     reads : Mutex<Vec<AccessPath>>,
+    record_reads : bool,
 }
 
 unsafe impl<'a> Sync for StateViewCache<'a> {}
@@ -54,11 +55,24 @@ impl<'a> StateViewCache<'a> {
         StateViewCache {
             data_view,
             data_map: BTreeMap::new(),
+            record_reads: false,
+            reads : Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn new_recorder(data_view: &'a dyn StateView) -> Self {
+        StateViewCache {
+            data_view,
+            data_map: BTreeMap::new(),
+            record_reads: true,
             reads : Mutex::new(Vec::new()),
         }
     }
 
     pub fn read_set(&self) -> Vec<AccessPath> {
+        if !self.record_reads {
+            panic!("NOT CONFIGURED TO RECORD READS");
+        }
         self.reads.lock().unwrap().iter().cloned().collect()
     }
 
@@ -87,8 +101,11 @@ impl<'block> StateView for StateViewCache<'block> {
             "Injected failure in data_cache::get"
         )));
 
-        self.reads.lock().unwrap().push(access_path.clone());
-        match self.data_map.get(access_path) {
+        if self.record_reads {
+            self.reads.lock().unwrap().push(access_path.clone());
+        }
+
+            match self.data_map.get(access_path) {
             Some(opt_data) => Ok(opt_data.clone()),
             None => match self.data_view.get(&access_path) {
                 Ok(remote_data) => Ok(remote_data),
