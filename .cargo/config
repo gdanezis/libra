@@ -7,3 +7,6 @@ xfix = "run --package x --bin x -- fix"
 xtest = "run --package x --bin x -- test"
 xlint = "run --package x --bin x -- lint"
 xbuild = "run --package x --bin x -- build"
+
+[build]
+rustflags = ["-C", "force-frame-pointers=y"]

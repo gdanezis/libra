@@ -885,22 +885,17 @@ impl DiemVM {
 
             println!("EXEC_STEP {} TX: {}", exec_step, current_processed_transactions.len());
             let xref = &*data_cache;
-            let mut inner_results = Vec::new();
+            let mut inner_results : Vec<Result<(VMStatus, TransactionOutput, Option<String>), VMStatus>> = Vec::new();
             // let ref_vm = &*self;
             inner_results = current_processed_transactions.par_iter().enumerate().map(
                 |(idx, txn)| {
-
-                    // Make a fresh data cache using the overall data cache underneath.
-                    //let local_state_view_cache = StateViewCache::new(xref);
                     let log_context = AdapterLogSchema::new(xref.id(), idx);
                     // Execute the transaction
                     let res = self.execute_single_txn(&xref, txn, &log_context);
                     res
-
             }).collect();
 
             let execute_time = std::time::Instant::now().duration_since(execute_start);
-
 
             info!(
                 "Execute. Execute time: {} ms. TPS: {}.",
@@ -974,7 +969,7 @@ impl DiemVM {
     ) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus> {
         let mut state_view_cache = StateViewCache::new(state_view);
         let mut vm = DiemVM::new(&state_view_cache);
-        vm.execute_block_impl(transactions, &mut state_view_cache, true)
+        vm.execute_block_impl(transactions, &mut state_view_cache, false)
     }
 }
 
