@@ -442,7 +442,7 @@ use  parking_lot;
 use  parking_lot::const_rwlock;
 
 pub(crate) struct Loader {
-    scripts: RwLock<ScriptCache>,
+    scripts: parking_lot::RwLock<ScriptCache>,
     module_cache: parking_lot::RwLock<ModuleCache>,
     type_cache: RwLock<TypeCache>,
 
@@ -458,7 +458,7 @@ const BUSY_FLAG : usize = usize::MAX;
 impl Loader {
     pub(crate) fn new() -> Self {
         Self {
-            scripts: RwLock::new(ScriptCache::new()),
+            scripts: const_rwlock(ScriptCache::new()),
             module_cache: const_rwlock(ModuleCache::new()),
             type_cache: RwLock::new(TypeCache::new()),
 
@@ -488,7 +488,7 @@ impl Loader {
     ) -> VMResult<(Arc<Function>, Vec<Type>)> {
         // retrieve or load the script
         let hash_value = HashValue::sha3_256_of(script_blob);
-        let opt_main = self.scripts.read().unwrap().get(&hash_value);
+        let opt_main = self.scripts.read().get(&hash_value);
         let main = match opt_main {
             Some(main) => main,
             None => {
@@ -496,7 +496,7 @@ impl Loader {
                     self.deserialize_and_verify_script(script_blob, data_store, log_context)?;
                 let script = Script::new(ver_script, &hash_value, &self.module_cache.read())?;
                 self.scripts
-                    .write().unwrap()
+                    .write()
                     .insert(hash_value, script)
                     .map_err(|e| e.finish(Location::Script))?
             }
@@ -975,7 +975,7 @@ impl Loader {
     fn get_script(&self, hash: &HashValue) -> Arc<Script> {
         Arc::clone(
             self.scripts
-            .read().unwrap()
+            .read()
                 .scripts
                 .get(hash)
                 .expect("Script hash on Function must exist"),
