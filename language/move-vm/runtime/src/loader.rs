@@ -437,9 +437,13 @@ impl ModuleCache {
 // entities. Each cache is protected by a `Mutex`. Operation in the Loader must be thread safe
 // (operating on values on the stack) and when cache needs updating the mutex must be taken.
 // The `pub(crate)` API is what a Loader offers to the runtime.
+
+use  parking_lot;
+use  parking_lot::const_rwlock;
+
 pub(crate) struct Loader {
     scripts: RwLock<ScriptCache>,
-    module_cache: RwLock<ModuleCache>,
+    module_cache: parking_lot::RwLock<ModuleCache>,
     type_cache: RwLock<TypeCache>,
 
     flag : AtomicUsize,
@@ -455,7 +459,7 @@ impl Loader {
     pub(crate) fn new() -> Self {
         Self {
             scripts: RwLock::new(ScriptCache::new()),
-            module_cache: RwLock::new(ModuleCache::new()),
+            module_cache: const_rwlock(ModuleCache::new()),
             type_cache: RwLock::new(TypeCache::new()),
 
             flag : AtomicUsize::new(0),
@@ -490,7 +494,7 @@ impl Loader {
             None => {
                 let ver_script =
                     self.deserialize_and_verify_script(script_blob, data_store, log_context)?;
-                let script = Script::new(ver_script, &hash_value, &self.module_cache.read().unwrap())?;
+                let script = Script::new(ver_script, &hash_value, &self.module_cache.read())?;
                 self.scripts
                     .write().unwrap()
                     .insert(hash_value, script)
@@ -598,12 +602,12 @@ impl Loader {
         self.load_module_expect_no_missing_dependencies(module_id, data_store, log_context)?;
         let idx = self
             .module_cache
-            .read().unwrap()
+            .read()
             .resolve_function_by_name(function_name, module_id)
             .map_err(|err| {
                 expect_no_verification_errors(err.finish(Location::Undefined), log_context)
             })?;
-        let func = self.module_cache.read().unwrap().function_at(idx);
+        let func = self.module_cache.read().function_at(idx);
 
         // verify type arguments
         let mut type_params = vec![];
@@ -747,7 +751,7 @@ impl Loader {
                 )?;
                 let (idx, struct_type) = self
                     .module_cache
-                    .read().unwrap()
+                    .read()
                     // GOOD module was loaded above
                     .resolve_struct_by_name(&struct_tag.name, &module_id)
                     .map_err(|e| e.finish(Location::Undefined))?;
@@ -806,7 +810,7 @@ impl Loader {
             Ok(module)
         }
 
-        if let Some(module) = self.module_cache.read().unwrap().module_at(id) {
+        if let Some(module) = self.module_cache.read().module_at(id) {
             return Ok(module);
         }
 
@@ -823,7 +827,7 @@ impl Loader {
         let module = deserialize_and_verify_module(self, bytes, data_store, log_context)
             .map_err(|err| expect_no_verification_errors(err, log_context))?;
         self.module_cache
-            .write().unwrap()
+            .write()
             .insert(id.clone(), module, log_context)
     }
 
@@ -902,7 +906,7 @@ impl Loader {
     //
 
     fn function_at(&self, idx: usize) -> Arc<Function> {
-        let read_lock = self.module_cache.read().unwrap();
+        let read_lock = self.module_cache.read();
         let fun = read_lock.function_at(idx);
         fun
 
@@ -955,13 +959,13 @@ impl Loader {
     }
 
     fn struct_at(&self, idx: usize) -> Arc<StructType> {
-        self.module_cache.read().unwrap().struct_at(idx)
+        self.module_cache.read().struct_at(idx)
     }
 
     fn get_module(&self, idx: &ModuleId) -> Arc<Module> {
         Arc::clone(
             self.module_cache
-            .read().unwrap()
+            .read()
                 .modules
                 .get(idx)
                 .expect("ModuleId on Function must exist"),
@@ -980,9 +984,9 @@ impl Loader {
 
     fn is_resource(&self, type_: &Type) -> bool {
         match type_ {
-            Type::Struct(idx) => self.module_cache.read().unwrap().struct_at(*idx).is_resource,
+            Type::Struct(idx) => self.module_cache.read().struct_at(*idx).is_resource,
             Type::StructInstantiation(idx, instantiation) => {
-                if self.module_cache.read().unwrap().struct_at(*idx).is_resource {
+                if self.module_cache.read().struct_at(*idx).is_resource {
                     true
                 } else {
                     for ty in instantiation {
@@ -1932,7 +1936,7 @@ impl Loader {
             .iter()
             .map(|ty| self.type_to_type_tag(ty))
             .collect::<PartialVMResult<Vec<_>>>()?;
-        let struct_type = self.module_cache.read().unwrap().struct_at(gidx);
+        let struct_type = self.module_cache.read().struct_at(gidx);
         let struct_tag = StructTag {
             address: *struct_type.module.address(),
             module: struct_type.module.name().to_owned(),
@@ -1988,7 +1992,7 @@ impl Loader {
             }
         }
 
-        let struct_type = self.module_cache.read().unwrap().struct_at(gidx);
+        let struct_type = self.module_cache.read().struct_at(gidx);
         let field_tys = struct_type
             .fields
             .iter()
@@ -2055,7 +2059,7 @@ impl Loader {
             }
         }
 
-        let struct_type = self.module_cache.read().unwrap().struct_at(gidx);
+        let struct_type = self.module_cache.read().struct_at(gidx);
 
         let mut is_resource = struct_type.is_resource;
         if !is_resource {
