@@ -22,9 +22,8 @@ use move_vm_runtime::data_cache::RemoteCache;
 use std::collections::btree_map::BTreeMap;
 use vm::errors::*;
 
-use std::sync::Mutex;
 use std::collections::HashSet;
-
+use std::sync::Mutex;
 
 /// A local cache for a given a `StateView`. The cache is private to the Diem layer
 /// but can be used as a one shot cache for systems that need a simple `RemoteCache`
@@ -42,8 +41,8 @@ use std::collections::HashSet;
 pub struct StateViewCache<'a> {
     pub data_view: &'a dyn StateView,
     data_map: BTreeMap<AccessPath, Option<Vec<u8>>>,
-    reads : Mutex<Vec<AccessPath>>,
-    record_reads : bool,
+    reads: Mutex<Vec<AccessPath>>,
+    record_reads: bool,
 }
 
 unsafe impl<'a> Sync for StateViewCache<'a> {}
@@ -56,7 +55,7 @@ impl<'a> StateViewCache<'a> {
             data_view,
             data_map: BTreeMap::new(),
             record_reads: false,
-            reads : Mutex::new(Vec::new()),
+            reads: Mutex::new(Vec::new()),
         }
     }
 
@@ -65,7 +64,7 @@ impl<'a> StateViewCache<'a> {
             data_view,
             data_map: BTreeMap::new(),
             record_reads: true,
-            reads : Mutex::new(Vec::new()),
+            reads: Mutex::new(Vec::new()),
         }
     }
 
@@ -105,7 +104,7 @@ impl<'block> StateView for StateViewCache<'block> {
             self.reads.lock().unwrap().push(access_path.clone());
         }
 
-            match self.data_map.get(access_path) {
+        match self.data_map.get(access_path) {
             Some(opt_data) => Ok(opt_data.clone()),
             None => match self.data_view.get(&access_path) {
                 Ok(remote_data) => Ok(remote_data),

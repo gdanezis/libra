@@ -34,6 +34,7 @@ use vm::{
 };
 
 use std::sync::RwLock;
+use std::sync::atomic::spin_loop_hint;
 
 // A simple cache that offers both a HashMap and a Vector lookup.
 // Values are forced into a `Arc` so they can be used from multiple thread.
@@ -906,12 +907,16 @@ impl Loader {
     //
 
     fn function_at(&self, idx: usize) -> Arc<Function> {
+        /*
         let read_lock = self.module_cache.read();
         let fun = read_lock.function_at(idx);
         fun
+        */
 
-        /*
         let mut size;
+        let mut spin_enter = 0;
+        let mut spin_exit = 0;
+
         loop {
             size = self.flag.load(Ordering::Relaxed);
 
@@ -927,9 +932,11 @@ impl Loader {
             if !(idx < size) {
                 break
             }
+            spin_enter += 1;
+            spin_loop_hint();
         }
 
-        let read_lock = self.module_cache.read().unwrap();
+        let read_lock = self.module_cache.read();
         let fun = read_lock.function_at(idx);
         let new_vec = read_lock.clone_functions();
 
@@ -950,11 +957,13 @@ impl Loader {
                 self.flag.store(new_size, Ordering::Release);
                 break
             }
+            spin_exit += 1;
+            spin_loop_hint();
 
         }
 
         return fun;
-        */
+
 
     }
 
@@ -1724,6 +1733,8 @@ impl Function {
                 }
 
                 if val == 3 { break }
+
+                spin_loop_hint();
             }
         }
 
