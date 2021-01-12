@@ -796,7 +796,7 @@ impl DiemVM {
                                         writes.push(path.clone());
                                     //println!("  -W {}", path);
                                     } else {
-                                        writes.push(path.clone());
+                                        reads.push(path.clone());
                                         //println!("  -R {}", path);
                                     }
                                 }
