@@ -27,7 +27,7 @@ use diem_types::{
         TransactionOutput, TransactionPayload, TransactionStatus, WriteSetPayload,
     },
     vm_status::{KeptVMStatus, StatusCode, VMStatus},
-    write_set::{WriteSet, WriteSetMut},
+    write_set::{WriteSet, WriteSetMut, WriteOp},
 };
 use fail::fail_point;
 use move_core_types::{
@@ -714,6 +714,12 @@ impl DiemVM {
         transactions: Vec<Transaction>,
         data_cache: &mut StateViewCache,
     ) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus> {
+
+        use crate::scheduler_parallel::{
+            WritesPlaceholder,
+            VersionedStateView,
+        };
+
         let count = transactions.len();
         let mut result = vec![];
         let mut should_restart = false;
@@ -752,12 +758,15 @@ impl DiemVM {
         let mut max_dependency = 0;
 
         let mut transaction_schedule = HashMap::new();
-
         let execute_start = std::time::Instant::now();
+
+        use num_cpus;
+        let mut placeholders = WritesPlaceholder::new();
+        let cpus = num_cpus::get();
 
         // Check the first transaction
         let mut params = Vec::with_capacity(20);
-        for txn in signature_verified_block.iter() {
+        for (idx, txn) in signature_verified_block.iter().enumerate() {
             if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
                 match user_txn.payload() {
                     TransactionPayload::Script(script) => {
@@ -789,22 +798,31 @@ impl DiemVM {
                                 let mut writes = Vec::new();
                                 let write_set: HashSet<AccessPath> =
                                     output.write_set().iter().map(|(k, _)| k).cloned().collect();
-                                //println!("Params: {:?}", params);
+                                // println!("Params: {:?}", params);
                                 for path in read_set {
                                     if write_set.contains(&path) {
                                         reads.push(path.clone());
                                         writes.push(path.clone());
-                                    //println!("  -W {}", path);
+                                    // println!("  -W {}", path);
                                     } else {
-                                        writes.push(path.clone());
-                                        //println!("  -R {}", path);
+                                        reads.push(path.clone());
+                                        // println!("  -R {}", path);
                                     }
                                 }
 
                                 read_write_infer.insert(
                                     script.code().to_vec(),
-                                    ScriptReadWriteSet::new(params, reads, writes),
+                                    ScriptReadWriteSet::new(params.clone(), reads, writes),
                                 );
+
+                                /* println!("STARTS Repeat the writes only:");
+                                let deps = read_write_infer.get(script.code()).unwrap();
+                                for w in deps.writes(&params) {
+                                    println!("  - WWW {}", w);
+                                }
+                                println!("ENDS")
+                                */
+
                             } else {
                                 panic!("NO LOGIC TO INFER READ/WRITE SET");
                             }
@@ -826,7 +844,10 @@ impl DiemVM {
                         }
 
                         for w in deps.writes(&params) {
-                            *versioning.entry(w).or_insert(max_read + 1) = max_read + 1;
+                            *versioning.entry(w.clone()).or_insert(max_read + 1) = max_read + 1;
+
+                            // Update the placeholder structure
+                            placeholders.add_placeholder(w, idx);
                         }
 
                         let mut dep_transactions = transaction_schedule
@@ -860,6 +881,89 @@ impl DiemVM {
             println!("REVERT TO SEQUENTIAL");
             return self.execute_block_impl(transactions, data_cache, false);
         }
+
+        use rayon::scope;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // The advanced scheduler
+        let execute_start = std::time::Instant::now();
+        let curent_idx = AtomicUsize::new(0);
+
+        scope(|s| {
+
+            for _ in 0..(cpus-1) {
+                s.spawn( |_| {
+                    let mut params = Vec::with_capacity(20);
+                    loop {
+                        // for (idx, txn) in signature_verified_block.iter().enumerate() {
+                        let idx = curent_idx.fetch_add(1, Ordering::Relaxed);
+                        if !(idx < signature_verified_block.len()) {
+                            break
+                        }
+                        let txn = &signature_verified_block[idx];
+
+                        if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
+                            match user_txn.payload() {
+                                TransactionPayload::Script(script) => {
+
+                                    params.clear();
+                                    params.push(user_txn.sender());
+                                    for arg in script.args() {
+                                        if let TransactionArgument::Address(address) = arg {
+                                            params.push(address.clone());
+                                        }
+                                    }
+
+                                    // Create the dependency structure
+                                    let deps = read_write_infer.get(script.code()).unwrap();
+                                    let versioned_state_view = VersionedStateView::new(idx, data_cache, &placeholders);
+                                    let local_state_view_cache = StateViewCache::new(&versioned_state_view);
+
+                                    let log_context = AdapterLogSchema::new(local_state_view_cache.id(), idx);
+                                    // Execute the transaction
+                                    if let Ok((vm_status, output, sender)) = self.execute_single_txn(&local_state_view_cache, txn, &log_context) {
+                                        for (k,v) in output.write_set() {
+                                            let val = match v {
+                                                WriteOp::Deletion => None,
+                                                WriteOp::Value(data) => Some(data.clone()),
+                                            };
+
+                                            placeholders.write(k.clone(), idx, val).unwrap();
+                                        }
+
+                                        for w in deps.writes(&params) {
+                                            placeholders.skip_if_not_set(w, idx).unwrap();
+                                        }
+
+
+                                    }
+                                    else
+                                    {
+                                        for w in deps.writes(&params) {
+                                            placeholders.skip(w, idx).unwrap();
+                                        }
+                                    }
+
+                                },
+                                _ => { unreachable!() },
+                            }
+                        }
+                    }
+                });
+            }
+
+        });
+
+        let execute_time = std::time::Instant::now().duration_since(execute_start);
+
+        info!(
+            "Advanced Exec. Execute time: {} ms. TPS: {}.",
+            execute_time.as_millis(),
+            num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
+        );
+
+
+        // The naive scheduler
 
         let mut discarded = 0;
         let mut exec_step = 0;

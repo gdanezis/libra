@@ -7,7 +7,21 @@ use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-struct WritesPlaceholder {
+unsafe impl Send for WritesPlaceholder {}
+unsafe impl Sync for WritesPlaceholder {}
+
+
+/// A structure that holds placeholders for each write to the database
+//
+//  The structure is created by one thread creating the scheduling, and
+//  at that point it is used as a &mut by that single thread.
+//
+//  Then it is passed to all threads executing as a shared reference. At
+//  this point only a single thread must write to any entry, and others
+//  can read from it. Only entries are mutated using interior mutability,
+//  but no entries can be added or deleted.
+//
+pub(crate) struct WritesPlaceholder {
     data: BTreeMap<WriteVersionKey, WriteVersionValue>,
 }
 
@@ -22,13 +36,13 @@ impl WritesPlaceholder {
         self.data.len()
     }
 
-    pub fn add_placeholder(&mut self, key: AccessPath, version: u64) {
+    pub fn add_placeholder(&mut self, key: AccessPath, version: usize) {
         let key = WriteVersionKey::new(key, version);
         let value = WriteVersionValue::new();
         self.data.insert(key, value);
     }
 
-    pub fn write(&self, key: AccessPath, version: u64, data: Option<Vec<u8>>) -> Result<(), ()> {
+    pub fn write(&self, key: AccessPath, version: usize, data: Option<Vec<u8>>) -> Result<(), ()> {
         // By construction there will only be a single writer, before the
         // write there will be no readers on the variable.
         // So it is safe to go ahead and write without any further check.
@@ -39,6 +53,16 @@ impl WritesPlaceholder {
             .get(&WriteVersionKey::new(key, version))
             .ok_or_else(|| ())?;
 
+        #[cfg(test)]
+        {
+            // Test the invariant holds
+            let flag = entry.flag.load(Ordering::Acquire);
+            if flag != FLAG_UNASSIGNED {
+                panic!("Cannot write twice to same entry.");
+            }
+
+        }
+
         unsafe {
             let val = &mut *entry.data.get();
             *val = data;
@@ -48,12 +72,45 @@ impl WritesPlaceholder {
         Ok(())
     }
 
-    pub fn skip(&self, key: AccessPath, version: u64) -> Result<(), ()> {
+
+    pub fn skip_if_not_set(&self, key: AccessPath, version: usize) -> Result<(), ()> {
+        // We only write or skip once per entry
+        // So it is safe to go ahead and just do it.
         let key = WriteVersionKey::new(key, version);
         let entry = self
             .data
             .get(&key)
             .ok_or_else(|| ())?;
+
+        // Test the invariant holds
+        let flag = entry.flag.load(Ordering::Acquire);
+        if flag == FLAG_UNASSIGNED {
+            entry.flag.store(FLAG_SKIP, Ordering::Release);
+        }
+
+        Ok(())
+    }
+
+
+    pub fn skip(&self, key: AccessPath, version: usize) -> Result<(), ()> {
+        // We only write or skip once per entry
+        // So it is safe to go ahead and just do it.
+        let key = WriteVersionKey::new(key, version);
+        let entry = self
+            .data
+            .get(&key)
+            .ok_or_else(|| ())?;
+
+        #[cfg(test)]
+        {
+            // Test the invariant holds
+            let flag = entry.flag.load(Ordering::Acquire);
+            if flag != FLAG_UNASSIGNED {
+                panic!("Cannot write twice to same entry.");
+            }
+        }
+
+
         entry.flag.store(FLAG_SKIP, Ordering::Release);
         Ok(())
     }
@@ -61,13 +118,13 @@ impl WritesPlaceholder {
     pub fn read(
         &self,
         key: AccessPath,
-        version: u64,
+        version: usize,
     ) -> Result<Option<Vec<u8>>, Option<WriteVersionKey>> {
 
         // Get the smaller key
         use std::ops::Bound::Excluded;
         let key_end = WriteVersionKey::new(key.clone(), version);
-        let key_zero = WriteVersionKey::new(key, 0_u64);
+        let key_zero = WriteVersionKey::new(key, 0_usize);
         let mut iter = self.data.range(key_zero..key_end);
 
         while let Some((entry_key, entry_val)) = iter.next_back() {
@@ -80,10 +137,12 @@ impl WritesPlaceholder {
                     return Err(Some(entry_key.clone()))
                 }
 
+                // If we are to skip this entry, pick the next one
                 if flag == FLAG_SKIP {
                     continue
                 }
 
+                // The entry is populated so return its contents
                 if flag == FLAG_DONE {
                     let data_read_ref = unsafe { &*entry_val.data.get() };
                     return Ok(data_read_ref.clone())
@@ -98,13 +157,13 @@ impl WritesPlaceholder {
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug)]
-struct WriteVersionKey {
+pub(crate) struct WriteVersionKey {
     path: AccessPath,
-    version: u64,
+    version: usize,
 }
 
 impl WriteVersionKey {
-    pub fn new(path: AccessPath, version: u64) -> WriteVersionKey {
+    pub fn new(path: AccessPath, version: usize) -> WriteVersionKey {
         WriteVersionKey { path, version }
     }
 }
@@ -113,7 +172,7 @@ const FLAG_UNASSIGNED: usize = 0;
 const FLAG_DONE: usize = 2;
 const FLAG_SKIP: usize = 3;
 
-struct WriteVersionValue {
+pub(crate) struct WriteVersionValue {
     flag: AtomicUsize,
     data: UnsafeCell<Option<Vec<u8>>>,
     _pad: [u8; 128], // Keep the flags on separate cache lines
@@ -187,4 +246,91 @@ mod tests {
 
     }
 
+}
+
+use diem_state_view::{StateView, StateViewId};
+use std::{thread, time};
+
+const ONE_MILLISEC : std::time::Duration = time::Duration::from_millis(10);
+
+pub(crate) struct VersionedStateView<'view> {
+    version : usize,
+    base_view : &'view dyn StateView,
+    placeholder : &'view WritesPlaceholder,
+}
+
+impl<'view> VersionedStateView<'view>{
+    pub fn new(version : usize, base_view: &'view StateView, placeholder : &'view WritesPlaceholder) -> VersionedStateView<'view> {
+        VersionedStateView {
+            version,
+            base_view,
+            placeholder,
+        }
+    }
+
+    pub fn will_read_block(&self, access_path: &AccessPath) -> bool {
+        let read = self.placeholder.read(access_path.clone(), self.version);
+        if let Err(Some(_)) = read {
+            return true;
+        }
+        return false;
+
+    }
+}
+
+impl<'block> StateView for VersionedStateView<'block> {
+    // Get some data either through the cache or the `StateView` on a cache miss.
+    fn get(&self, access_path: &AccessPath) -> anyhow::Result<Option<Vec<u8>>> {
+
+        let mut loop_iterations = 0;
+        loop {
+
+            let read = self.placeholder.read(access_path.clone(), self.version);
+
+            // Go to the Database
+            if let Err(None) = read{
+                return self.base_view.get(access_path);
+            }
+
+            // Read is a success
+            if let Ok(data) = read {
+                if loop_iterations != 0 {
+                    println!("BLOCK ON {} ver={} iter={}", access_path, self.version, loop_iterations);
+                }
+
+                return Ok(data);
+            }
+
+            loop_iterations+= 1;
+            if loop_iterations < 100 {
+                ::std::sync::atomic::spin_loop_hint();
+            }
+            else
+            {
+                thread::sleep(ONE_MILLISEC);
+
+                if loop_iterations % 10 == 0 {
+                    if let Err(Some(key)) = read {
+                        println!("Wait on: {:?}", key);
+                    }
+
+                    println!("BIG BLOCK ON {} ver={} iter={}", access_path, self.version, loop_iterations);
+                }
+            }
+        }
+
+
+    }
+
+    fn multi_get(&self, _access_paths: &[AccessPath]) -> anyhow::Result<Vec<Option<Vec<u8>>>> {
+        unimplemented!()
+    }
+
+    fn is_genesis(&self) -> bool {
+        self.base_view.is_genesis()
+    }
+
+    fn id(&self) -> StateViewId {
+        self.base_view.id()
+    }
 }
