@@ -248,8 +248,9 @@ pub fn run_benchmark(
                 let execute_time = std::time::Instant::now().duration_since(execute_start);
 
                 info!(
-                    "Version: XX. execute time: {} ms. commit time: XX ms. TPS: {}.",
+                    "Overall execute time: {} ms. Per tx: {}ns. TPS: {}",
                     execute_time.as_millis(),
+                    execute_time.as_nanos() / num_txns as u128,
                     num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
                 );
 
