@@ -884,6 +884,9 @@ impl DiemVM {
 
             for _ in 0..(cpus-1) {
                 s.spawn( |_| {
+                    // Make a new VM per thread
+                    let thread_vm = DiemVM::new(data_cache);
+
                     let mut params = Vec::with_capacity(20);
                     loop {
                         // for (idx, txn) in signature_verified_block.iter().enumerate() {
@@ -913,7 +916,7 @@ impl DiemVM {
                                     let log_context = AdapterLogSchema::new(local_state_view_cache.id(), idx);
                                     // Execute the transaction
 
-                                    let res = self.execute_single_txn(&local_state_view_cache, txn, &log_context);
+                                    let res = thread_vm.execute_single_txn(&local_state_view_cache, txn, &log_context);
                                     match res {
                                         Ok((vm_status, output, sender)) => {
                                             if !output.status().is_discarded() {
