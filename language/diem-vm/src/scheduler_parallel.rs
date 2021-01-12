@@ -57,7 +57,7 @@ impl WritesPlaceholder {
         Ok(results.into_iter().map(|entry| {
             let val = unsafe { &mut *entry.get() };
             let val = val.take();
-            val.unwrap()
+            val.expect("ERROR: WE EXPECT ALL ENTRIES TO BE POPULATED WITH A RESULT!");
         }).collect())
     }
 

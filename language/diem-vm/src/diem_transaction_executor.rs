@@ -705,7 +705,6 @@ impl DiemVM {
         // Record the histogram count for transactions per block.
         BLOCK_TRANSACTION_COUNT.observe(count as f64);
 
-        println!("RETURN {} resutls", result.len());
         Ok(result)
     }
 
@@ -841,13 +840,6 @@ impl DiemVM {
                             // Update the placeholder structure
                             placeholders.add_placeholder(w, idx);
                         }
-
-                        /*
-                        let mut dep_transactions = transaction_schedule
-                            .entry(max_read + 1)
-                            .or_insert_with(|| Vec::new());
-                        dep_transactions.push(txn);
-                        */
 
                         max_dependency = max(max_dependency, max_read + 1);
                     }
