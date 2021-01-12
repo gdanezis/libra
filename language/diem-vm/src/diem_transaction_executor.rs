@@ -756,7 +756,7 @@ impl DiemVM {
         let mut versioning = HashMap::new();
         let mut max_dependency = 0;
 
-        let mut transaction_schedule = HashMap::new();
+        // let mut transaction_schedule = HashMap::new();
         let execute_start = std::time::Instant::now();
 
         use num_cpus;
@@ -830,6 +830,7 @@ impl DiemVM {
                         // Create the dependency structure
                         let deps = read_write_infer.get(script.code()).unwrap();
                         let mut max_read = 0;
+
                         for r in deps.reads(&params) {
                             max_read = max(max_read, *versioning.entry(r).or_insert(0));
                         }
@@ -841,10 +842,12 @@ impl DiemVM {
                             placeholders.add_placeholder(w, idx);
                         }
 
+                        /*
                         let mut dep_transactions = transaction_schedule
                             .entry(max_read + 1)
                             .or_insert_with(|| Vec::new());
                         dep_transactions.push(txn);
+                        */
 
                         max_dependency = max(max_dependency, max_read + 1);
                     }
