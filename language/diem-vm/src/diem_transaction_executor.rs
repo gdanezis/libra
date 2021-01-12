@@ -862,7 +862,7 @@ impl DiemVM {
         );
 
         println!("Max dependency: {}", max_dependency);
-        if max_dependency > 200 {
+        if max_dependency > transactions.len() / 4 {
             println!("REVERT TO SEQUENTIAL");
             return self.execute_block_impl(transactions, data_cache, false);
         }
@@ -889,9 +889,8 @@ impl DiemVM {
 
                     loop {
 
-                        if tx_idx_ring_buffer.len() < 10 {
+                        if tx_idx_ring_buffer.len() < 10 { // How many transactions to have in the buffer.
 
-                            // for (idx, txn) in signature_verified_block.iter().enumerate() {
                             let idx = curent_idx.fetch_add(1, Ordering::Relaxed);
                             if (idx < signature_verified_block.len()) {
                                 let txn = &signature_verified_block[idx];
@@ -926,6 +925,8 @@ impl DiemVM {
                                         // println!("Delay {}", idx);
                                         tx_idx_ring_buffer.push_back( (idx, txn) );
 
+                                        // This causes a PAUSE on an x64 arch, and takes 140 cycles. Allows other
+                                        // core to take resources and better HT.
                                         ::std::sync::atomic::spin_loop_hint();
                                         continue
                                     }
