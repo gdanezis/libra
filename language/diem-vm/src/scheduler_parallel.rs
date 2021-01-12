@@ -1,7 +1,15 @@
 // Copyright (c) The Diem Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use diem_types::access_path::AccessPath;
+
+use diem_types::{
+    access_path::AccessPath,
+    transaction::{
+        TransactionOutput,
+    },
+    vm_status::{VMStatus, },
+};
+
 
 use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
@@ -23,13 +31,34 @@ unsafe impl Sync for WritesPlaceholder {}
 //
 pub(crate) struct WritesPlaceholder {
     data: BTreeMap<WriteVersionKey, WriteVersionValue>,
+    results : Vec<UnsafeCell<Option<(VMStatus, TransactionOutput)>>>,
 }
 
 impl WritesPlaceholder {
-    pub fn new() -> WritesPlaceholder {
+    pub fn new(len : usize) -> WritesPlaceholder {
         WritesPlaceholder {
             data: BTreeMap::new(),
+            results : (0..len).map(|_| UnsafeCell::new(None)).collect(),
         }
+    }
+
+    pub fn set_result(&self, idx:usize, res: (VMStatus, TransactionOutput)) {
+        // Only one thread can write at the time, so just set it.
+        let entry = &self.results[idx];
+        unsafe {
+            let mut_entry = &mut*entry.get();
+            *mut_entry = Some(res);
+        }
+    }
+
+    pub fn get_all_results(self) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>{
+
+        let results = self.results;
+        Ok(results.into_iter().map(|entry| {
+            let val = unsafe { &mut *entry.get() };
+            let val = val.take();
+            val.unwrap()
+        }).collect())
     }
 
     pub fn len(&self) -> usize {

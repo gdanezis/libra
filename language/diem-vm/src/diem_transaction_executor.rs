@@ -721,7 +721,6 @@ impl DiemVM {
         };
 
         let count = transactions.len();
-        let mut result = vec![];
         let mut should_restart = false;
 
         info!(
@@ -761,7 +760,7 @@ impl DiemVM {
         let execute_start = std::time::Instant::now();
 
         use num_cpus;
-        let mut placeholders = WritesPlaceholder::new();
+        let mut placeholders = WritesPlaceholder::new(signature_verified_block.len());
         let cpus = num_cpus::get();
 
         // Check the first transaction
@@ -812,16 +811,8 @@ impl DiemVM {
 
                                 read_write_infer.insert(
                                     script.code().to_vec(),
-                                    ScriptReadWriteSet::new(params.clone(), reads, writes),
+                                    ScriptReadWriteSet::new(params, reads, writes),
                                 );
-
-                                /* println!("STARTS Repeat the writes only:");
-                                let deps = read_write_infer.get(script.code()).unwrap();
-                                for w in deps.writes(&params) {
-                                    println!("  - WWW {}", w);
-                                }
-                                println!("ENDS")
-                                */
 
                             } else {
                                 panic!("NO LOGIC TO INFER READ/WRITE SET");
@@ -921,26 +912,39 @@ impl DiemVM {
 
                                     let log_context = AdapterLogSchema::new(local_state_view_cache.id(), idx);
                                     // Execute the transaction
-                                    if let Ok((vm_status, output, sender)) = self.execute_single_txn(&local_state_view_cache, txn, &log_context) {
-                                        for (k,v) in output.write_set() {
-                                            let val = match v {
-                                                WriteOp::Deletion => None,
-                                                WriteOp::Value(data) => Some(data.clone()),
-                                            };
 
-                                            placeholders.write(k.clone(), idx, val).unwrap();
+                                    let res = self.execute_single_txn(&local_state_view_cache, txn, &log_context);
+                                    match res {
+                                        Ok((vm_status, output, sender)) => {
+                                            if !output.status().is_discarded() {
+
+                                                for (k,v) in output.write_set() {
+                                                    let val = match v {
+                                                        WriteOp::Deletion => None,
+                                                        WriteOp::Value(data) => Some(data.clone()),
+                                                    };
+
+                                                    placeholders.write(k.clone(), idx, val).unwrap();
+                                                }
+
+                                                for w in deps.writes(&params) {
+                                                    placeholders.skip_if_not_set(w, idx).unwrap();
+                                                }
+
+                                                // Commit the results to the data cache
+                                                placeholders.set_result(idx, (vm_status, output));
+                                            } else {
+
+                                                for w in deps.writes(&params) {
+                                                    placeholders.skip(w, idx).unwrap();
+                                                }
+
+                                                placeholders.set_result(idx, (vm_status, output));
+                                            }
                                         }
-
-                                        for w in deps.writes(&params) {
-                                            placeholders.skip_if_not_set(w, idx).unwrap();
-                                        }
-
-
-                                    }
-                                    else
-                                    {
-                                        for w in deps.writes(&params) {
-                                            placeholders.skip(w, idx).unwrap();
+                                        Err(e) => {
+                                            panic!("TODO STOP VM & RETURN ERROR");
+                                            // return Err(e);
                                         }
                                     }
 
@@ -962,89 +966,7 @@ impl DiemVM {
             num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
         );
 
-
-        // The naive scheduler
-
-        let mut discarded = 0;
-        let mut exec_step = 0;
-        loop {
-            let execute_start = std::time::Instant::now();
-
-            let current_level = transaction_schedule.keys().min();
-            let level = match current_level {
-                None => break,
-                Some(level) => level.clone(),
-            };
-
-            let mut current_processed_transactions = transaction_schedule.remove(&level).unwrap();
-            let inner_tx_num = current_processed_transactions.len();
-
-            println!(
-                "EXEC_STEP {} TX: {}",
-                exec_step,
-                current_processed_transactions.len()
-            );
-            let xref = &*data_cache;
-            let mut inner_results: Vec<
-                Result<(VMStatus, TransactionOutput, Option<String>), VMStatus>,
-            > = Vec::new();
-            // let ref_vm = &*self;
-            inner_results = current_processed_transactions
-                .par_iter()
-                .enumerate()
-                .map(|(idx, txn)| {
-                    let log_context = AdapterLogSchema::new(xref.id(), idx);
-                    // Execute the transaction
-                    let res = self.execute_single_txn(&xref, txn, &log_context);
-                    res
-                })
-                .collect();
-
-            let execute_time = std::time::Instant::now().duration_since(execute_start);
-
-            info!(
-                "Execute. Execute time: {} ms. TPS: {}.",
-                execute_time.as_millis(),
-                inner_tx_num as u128 * 1_000_000_000 / execute_time.as_nanos(),
-            );
-
-            let execute_start = std::time::Instant::now();
-            for res in inner_results.into_iter() {
-                match res {
-                    Ok((vm_status, output, sender)) => {
-                        if !output.status().is_discarded() {
-                            // Commit the results to the data cache
-                            data_cache.push_write_set(output.write_set());
-                            result.push((vm_status, output))
-                        } else {
-                            discarded += 1;
-                            result.push((vm_status, output));
-                        }
-                    }
-                    Err(e) => {
-                        return Err(e);
-                    }
-                }
-            }
-
-            let execute_time = std::time::Instant::now().duration_since(execute_start);
-
-            info!(
-                "Commit. Execute time: {} ms. TPS: {}.",
-                execute_time.as_millis(),
-                inner_tx_num as u128 * 1_000_000_000 / execute_time.as_nanos(),
-            );
-
-            // signature_verified_block = remaining_txs;
-            exec_step += 1;
-        }
-        println!("Discarded {}", discarded);
-
-        // Record the histogram count for transactions per block.
-        BLOCK_TRANSACTION_COUNT.observe(count as f64);
-
-        println!("RETURN {} resutls", result.len());
-        Ok(result)
+        return placeholders.get_all_results();
     }
 
     fn execute_block_impl(
