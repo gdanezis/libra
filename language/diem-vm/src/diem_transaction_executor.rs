@@ -722,8 +722,7 @@ impl DiemVM {
         let count = transactions.len();
         let mut should_restart = false;
 
-        info!(
-            AdapterLogSchema::new(data_cache.id(), 0),
+        println!(
             "Executing block, transaction count: {}",
             transactions.len()
         );
@@ -745,7 +744,7 @@ impl DiemVM {
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
 
-        info!(
+        println!(
             "Check Signatures. Execute time: {} ms. TPS: {}.",
             execute_time.as_millis(),
             num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
@@ -856,7 +855,7 @@ impl DiemVM {
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
 
-        info!(
+        println!(
             "Schedule. Execute time: {} ms. TPS: {}.",
             execute_time.as_millis(),
             num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
@@ -877,6 +876,7 @@ impl DiemVM {
 
         scope(|s| {
 
+            println!("Launching {} threads to execute ...", cpus-1);
             for _ in 0..(cpus-1) {
                 s.spawn( |_| {
                     // Make a new VM per thread
@@ -958,7 +958,7 @@ impl DiemVM {
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
 
-        info!(
+        println!(
             "Advanced Exec. Execute time: {} ms. TPS: {}.",
             execute_time.as_millis(),
             num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
