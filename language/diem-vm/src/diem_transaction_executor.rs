@@ -862,7 +862,7 @@ impl DiemVM {
         );
 
         println!("Max dependency: {}", max_dependency);
-        if max_dependency > 40 {
+        if max_dependency > 200 {
             println!("REVERT TO SEQUENTIAL");
             return self.execute_block_impl(transactions, data_cache, false);
         }
