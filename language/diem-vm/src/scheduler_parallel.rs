@@ -331,13 +331,14 @@ impl<'block> StateView for VersionedStateView<'block> {
             }
 
             loop_iterations+= 1;
-            if loop_iterations < 100 {
+            if loop_iterations < 500 {
                 ::std::sync::atomic::spin_loop_hint();
             }
             else
             {
                 thread::sleep(ONE_MILLISEC);
 
+                /*
                 if loop_iterations % 10 == 0 {
                     if let Err(Some(key)) = read {
                         println!("Wait on: {:?}", key);
@@ -345,6 +346,7 @@ impl<'block> StateView for VersionedStateView<'block> {
 
                     println!("BIG BLOCK ON {} ver={} iter={}", access_path, self.version, loop_iterations);
                 }
+                */
             }
         }
 
