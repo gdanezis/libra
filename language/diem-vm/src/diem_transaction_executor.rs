@@ -874,6 +874,8 @@ impl DiemVM {
         let execute_start = std::time::Instant::now();
         let curent_idx = AtomicUsize::new(0);
 
+        use std::collections::VecDeque;
+
         scope(|s| {
 
             println!("Launching {} threads to execute ...", cpus-1);
@@ -883,13 +885,25 @@ impl DiemVM {
                     let thread_vm = DiemVM::new(data_cache);
 
                     let mut params = Vec::with_capacity(20);
+                    let mut tx_idx_ring_buffer = VecDeque::with_capacity(10);
+
                     loop {
-                        // for (idx, txn) in signature_verified_block.iter().enumerate() {
-                        let idx = curent_idx.fetch_add(1, Ordering::Relaxed);
-                        if !(idx < signature_verified_block.len()) {
+
+                        if tx_idx_ring_buffer.len() < 10 {
+
+                            // for (idx, txn) in signature_verified_block.iter().enumerate() {
+                            let idx = curent_idx.fetch_add(1, Ordering::Relaxed);
+                            if (idx < signature_verified_block.len()) {
+                                let txn = &signature_verified_block[idx];
+                                tx_idx_ring_buffer.push_back( (idx, txn) );
+                            }
+                        }
+
+                        if tx_idx_ring_buffer.len() == 0 {
                             break
                         }
-                        let txn = &signature_verified_block[idx];
+
+                        let (idx, txn) = tx_idx_ring_buffer.pop_front().unwrap(); // safe due to previous check
 
                         if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
                             match user_txn.payload() {
@@ -906,6 +920,16 @@ impl DiemVM {
                                     // Create the dependency structure
                                     let deps = read_write_infer.get(script.code()).unwrap();
                                     let versioned_state_view = VersionedStateView::new(idx, data_cache, &placeholders);
+
+                                    // Delay and move to next tx if cannot execure now.
+                                    if deps.reads(&params).any(|k| versioned_state_view.will_read_block(&k) ) {
+                                        // println!("Delay {}", idx);
+                                        tx_idx_ring_buffer.push_back( (idx, txn) );
+
+                                        ::std::sync::atomic::spin_loop_hint();
+                                        continue
+                                    }
+
                                     let local_state_view_cache = StateViewCache::new(&versioned_state_view);
 
                                     let log_context = AdapterLogSchema::new(local_state_view_cache.id(), idx);
