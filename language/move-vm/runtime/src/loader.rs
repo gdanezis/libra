@@ -907,12 +907,12 @@ impl Loader {
     //
 
     fn function_at(&self, idx: usize) -> Arc<Function> {
-        /*
+
         let read_lock = self.module_cache.read();
         let fun = read_lock.function_at(idx);
         fun
-        */
 
+        /*
         let mut size;
         let mut spin_enter = 0;
         let mut spin_exit = 0;
@@ -964,7 +964,7 @@ impl Loader {
 
         return fun;
 
-
+        */
     }
 
     fn struct_at(&self, idx: usize) -> Arc<StructType> {
