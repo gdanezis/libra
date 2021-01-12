@@ -323,10 +323,11 @@ impl<'block> StateView for VersionedStateView<'block> {
 
             // Read is a success
             if let Ok(data) = read {
+                /*
                 if loop_iterations != 0 {
                     println!("BLOCK ON {} ver={} iter={}", access_path, self.version, loop_iterations);
                 }
-
+                */
                 return Ok(data);
             }
 
