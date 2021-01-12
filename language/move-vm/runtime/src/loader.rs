@@ -101,12 +101,6 @@ impl ScriptCache {
     }
 }
 
-impl Drop for ScriptCache {
-    fn drop(&mut self) {
-        println!("Script Cache: {} entries", self.scripts.len());
-    }
-}
-
 // A ModuleCache is the core structure in the Loader.
 // It holds all Modules, Types and Functions loaded.
 // Types and Functions are pushed globally to the ModuleCache.
