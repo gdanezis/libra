@@ -20,7 +20,7 @@ use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap},
     convert::TryInto,
-    sync::{Arc, Mutex, }
+    sync::{Arc, Mutex, RwLock}
 };
 
 /// `VerifiedStateView` is like a snapshot of the global state comprised of state view at two
@@ -78,8 +78,8 @@ pub struct VerifiedStateView<'a> {
     ///        | +------------------------------+ +--------------------+ |
     ///        +---------------------------------------------------------+
     /// ```
-    account_to_state_cache: Mutex<HashMap<AccountAddress, AccountState>>,
-    account_to_proof_cache: Mutex<HashMap<HashValue, SparseMerkleProof>>,
+    account_to_state_cache: RwLock<HashMap<AccountAddress, AccountState>>,
+    account_to_proof_cache: RwLock<HashMap<HashValue, SparseMerkleProof>>,
 }
 
 impl<'a> VerifiedStateView<'a> {
@@ -108,8 +108,8 @@ impl<'a> VerifiedStateView<'a> {
             latest_persistent_version,
             latest_persistent_state_root,
             speculative_state,
-            account_to_state_cache: Mutex::new(HashMap::new()),
-            account_to_proof_cache: Mutex::new(HashMap::new()),
+            account_to_state_cache: RwLock::new(HashMap::new()),
+            account_to_proof_cache: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -141,7 +141,13 @@ impl<'a> StateView for VerifiedStateView<'a> {
     fn get(&self, access_path: &AccessPath) -> Result<Option<Vec<u8>>> {
         let address = access_path.address;
         let path = &access_path.path;
-        match self.account_to_state_cache.lock().unwrap().entry(address) {
+
+        // Lock for read first:
+        if let Some(contents) = self.account_to_state_cache.read().unwrap().get(&address) {
+            return Ok(contents.get(path).cloned())
+        }
+
+        match self.account_to_state_cache.write().unwrap().entry(address) {
             Entry::Occupied(occupied) => Ok(occupied.get().get(path).cloned()),
             Entry::Vacant(vacant) => {
                 let address_hash = address.hash();
@@ -173,7 +179,7 @@ impl<'a> StateView for VerifiedStateView<'a> {
                             })?;
                         assert!(self
                             .account_to_proof_cache
-                            .lock().unwrap()
+                            .write().unwrap()
                             .insert(address_hash, proof)
                             .is_none());
                         blob

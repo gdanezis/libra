@@ -866,7 +866,7 @@ impl DiemVM {
                             if versioning.contains_key(&w) {
                                 let mut_val = versioning.get_mut(&w).unwrap();
                                 *mut_val += 1;
-                                max_dependency = max(max_dependency, 1);
+                                max_dependency = max(max_dependency, *mut_val);
 
                             }
                             else
@@ -994,14 +994,14 @@ impl DiemVM {
                                                 }
 
                                                 // Commit the results to the data cache
-                                                placeholders.set_result(idx, (vm_status, output));
+                                                placeholders.set_result(idx, (vm_status, output), true);
                                             } else {
 
                                                 for w in deps.writes(&params) {
                                                     placeholders.skip(w, idx).unwrap();
                                                 }
 
-                                                placeholders.set_result(idx, (vm_status, output));
+                                                placeholders.set_result(idx, (vm_status, output), false);
                                             }
                                         }
                                         Err(e) => {
@@ -1027,6 +1027,9 @@ impl DiemVM {
             execute_time.as_millis(),
             num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
         );
+
+        let (num_success, num_fail) = placeholders.get_stats();
+        println!("Block: {} success, {} failures", num_success, num_fail);
 
         return placeholders.get_all_results();
     }

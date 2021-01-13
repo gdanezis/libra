@@ -32,6 +32,9 @@ unsafe impl Sync for WritesPlaceholder {}
 pub(crate) struct WritesPlaceholder {
     data: BTreeMap<WriteVersionKey, WriteVersionValue>,
     results : Vec<UnsafeCell<Option<(VMStatus, TransactionOutput)>>>,
+
+    success_num : AtomicUsize,
+    failure_num : AtomicUsize,
 }
 
 impl WritesPlaceholder {
@@ -39,16 +42,32 @@ impl WritesPlaceholder {
         WritesPlaceholder {
             data: BTreeMap::new(),
             results : (0..len).map(|_| UnsafeCell::new(None)).collect(),
+
+            success_num : AtomicUsize::new(0),
+            failure_num : AtomicUsize::new(0),
         }
     }
 
-    pub fn set_result(&self, idx:usize, res: (VMStatus, TransactionOutput)) {
+    pub fn set_result(&self, idx:usize, res: (VMStatus, TransactionOutput), success : bool) {
         // Only one thread can write at the time, so just set it.
         let entry = &self.results[idx];
         unsafe {
             let mut_entry = &mut*entry.get();
             *mut_entry = Some(res);
         }
+
+        if success {
+            self.success_num.fetch_add(1, Ordering::Relaxed);
+        }
+        else
+        {
+            self.failure_num.fetch_add(1, Ordering::Relaxed);
+        }
+
+    }
+
+    pub fn get_stats(&self) -> (usize, usize) {
+        return (self.success_num.load(Ordering::Relaxed), self.failure_num.load(Ordering::Relaxed))
     }
 
     pub fn get_all_results(self) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>{
@@ -82,7 +101,7 @@ impl WritesPlaceholder {
             .get(&WriteVersionKey::new(key, version))
             .ok_or_else(|| ())?;
 
-        #[cfg(test)]
+        // #[cfg(test)]
         {
             // Test the invariant holds
             let flag = entry.flag.load(Ordering::Acquire);
