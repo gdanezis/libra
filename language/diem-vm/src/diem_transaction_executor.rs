@@ -708,63 +708,15 @@ impl DiemVM {
         Ok(result)
     }
 
-    fn execute_block_impl_parallel(
-        &mut self,
-        transactions: Vec<Transaction>,
-        data_cache: &mut StateViewCache,
-    ) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus> {
-
-        use crate::scheduler_parallel::{
-            WritesPlaceholder,
-            VersionedStateView,
-        };
-
-        let count = transactions.len();
-        let mut should_restart = false;
-
-        println!(
-            "Executing block, transaction count: {}",
-            transactions.len()
-        );
-
-        let num_txns = transactions.len();
-
-        let execute_start = std::time::Instant::now();
-        let mut signature_verified_block: Vec<Result<PreprocessedTransaction, VMStatus>>;
-        {
-            // Verify the signatures of all the transactions in parallel.
-            // This is time consuming so don't wait and do the checking
-            // sequentially while executing the transactions.
-            signature_verified_block = transactions
-                .clone()
-                .into_par_iter()
-                .map(preprocess_transaction)
-                .collect();
-        }
-
-        let execute_time = std::time::Instant::now().duration_since(execute_start);
-
-        println!(
-            "Check Signatures. Execute time: {} ms. TPS: {}.",
-            execute_time.as_millis(),
-            num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
-        );
-
+    fn dependency_structure_hack(&self,
+            transactions: &Vec<Transaction>,
+            data_cache: &mut StateViewCache,
+        ) -> Result<HashMap::<Vec<u8>, ScriptReadWriteSet>, ()> {
+        // STARTS -- DEPENDENCY INFERENCE HACK / Replace with static analysis of write set
         let mut read_write_infer = HashMap::<Vec<u8>, ScriptReadWriteSet>::new();
-        let mut versioning = HashMap::new();
-        let mut max_dependency = 0;
 
-        // let mut transaction_schedule = HashMap::new();
-        let execute_start = std::time::Instant::now();
-
-        use num_cpus;
-        let mut placeholders = WritesPlaceholder::new(signature_verified_block.len());
-        let cpus = num_cpus::get();
-
-        // Check the first transaction
-        let mut params = Vec::with_capacity(20);
-        for (idx, txn) in signature_verified_block.iter().enumerate() {
-            if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
+        for (idx, txn) in transactions.iter().enumerate() {
+            if let Transaction::UserTransaction(user_txn) = txn {
                 match user_txn.payload() {
                     TransactionPayload::Script(script) => {
                         // If the transaction is not known, then execute it to infer its read/write logic.
@@ -774,8 +726,9 @@ impl DiemVM {
                             let local_state_view_cache = StateViewCache::new_recorder(xref);
                             let log_context = AdapterLogSchema::new(xref.id(), 0);
                             // Execute the transaction
+                            let verif_txn = preprocess_transaction(txn.clone());
                             if let Ok((vm_status, output, sender)) =
-                                self.execute_single_txn(&local_state_view_cache, txn, &log_context)
+                                self.execute_single_txn(&local_state_view_cache, &verif_txn, &log_context)
                             {
                                 // Record the read-set
                                 let read_set = local_state_view_cache.read_set();
@@ -816,7 +769,88 @@ impl DiemVM {
                                 panic!("NO LOGIC TO INFER READ/WRITE SET");
                             }
                         }
+                    }
+                    _ => {
+                        println!("NON SCIPT TRANSACTION");
+                        // return self.execute_block_impl(transactions, data_cache, false);
+                        return Err(())
+                    }
+                }
+            } else {
+                println!("NON USER TRANSACTION");
+                // return self.execute_block_impl(transactions, data_cache, false);
+                return Err(())
+            }
+        }
 
+        // ENDS
+        Ok(read_write_infer)
+
+    }
+
+    fn execute_block_impl_parallel(
+        &mut self,
+        transactions: Vec<Transaction>,
+        data_cache: &mut StateViewCache,
+    ) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus> {
+
+        use crate::scheduler_parallel::{
+            WritesPlaceholder,
+            VersionedStateView,
+        };
+
+        // Update the dependency analysis structure. We only do this for blocks that
+        // purely consist of UserTransactions (Extending this is a TODO). If non-user
+        // transactions are detected this returns and err, and we revert to sequential
+        // block processing.
+        let mut infer_result = self.dependency_structure_hack(&transactions, data_cache);
+        let read_write_infer = match infer_result {
+            Err(_) => return self.execute_block_impl(transactions, data_cache, false),
+            Ok(val) => val,
+        };
+
+        // Count and print the number of transactions.
+        let num_txns = transactions.len();
+        let mut should_restart = false;
+        println!("Executing block, transaction count: {}", num_txns);
+
+        let execute_start = std::time::Instant::now();
+        let mut signature_verified_block: Vec<Result<PreprocessedTransaction, VMStatus>>;
+        {
+            // Verify the signatures of all the transactions in parallel.
+            // This is time consuming so don't wait and do the checking
+            // sequentially while executing the transactions.
+            signature_verified_block = transactions
+                .clone()
+                .into_par_iter()
+                .map(preprocess_transaction)
+                .collect();
+        }
+
+        let execute_time = std::time::Instant::now().duration_since(execute_start);
+        println!(
+            "Check Signatures. Execute time: {} ms. TPS: {}.",
+            execute_time.as_millis(),
+            num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
+        );
+
+        let execute_start = std::time::Instant::now();
+
+        let mut versioning = HashMap::new();
+        let mut max_dependency = 0;
+        let mut placeholders = WritesPlaceholder::new(signature_verified_block.len());
+
+        use num_cpus;
+        let cpus = num_cpus::get();
+
+        // Analyse each user script for its write-set and create the placeholder structure
+        // that allows for parallel execution.
+        let mut params = Vec::with_capacity(20);
+        for (idx, txn) in signature_verified_block.iter().enumerate() {
+            if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
+                match user_txn.payload() {
+                    TransactionPayload::Script(script) => {
+                        // If the transaction is not known, then execute it to infer its read/write logic.
                         params.clear();
                         params.push(user_txn.sender());
                         for arg in script.args() {
@@ -827,20 +861,25 @@ impl DiemVM {
 
                         // Create the dependency structure
                         let deps = read_write_infer.get(script.code()).unwrap();
-                        let mut max_read = 0;
-
-                        for r in deps.reads(&params) {
-                            max_read = max(max_read, *versioning.entry(r).or_insert(0));
-                        }
-
                         for w in deps.writes(&params) {
-                            *versioning.entry(w.clone()).or_insert(max_read + 1) = max_read + 1;
+                            // Track longest chains
+                            if versioning.contains_key(&w) {
+                                let mut_val = versioning.get_mut(&w).unwrap();
+                                *mut_val += 1;
+                                max_dependency = max(max_dependency, 1);
+
+                            }
+                            else
+                            {
+                                versioning.insert(w.clone(), 1);
+                                max_dependency = max(max_dependency, 1);
+                            }
+
 
                             // Update the placeholder structure
                             placeholders.add_placeholder(w, idx);
                         }
 
-                        max_dependency = max(max_dependency, max_read + 1);
                     }
                     _ => {
                         println!("NON SCIPT TRANSACTION");
