@@ -1052,7 +1052,7 @@ impl DiemVM {
     ) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus> {
         let mut state_view_cache = StateViewCache::new(state_view);
         let mut vm = DiemVM::new(&state_view_cache);
-        vm.execute_block_impl(transactions, &mut state_view_cache, false)
+        vm.execute_block_impl(transactions, &mut state_view_cache, true)
     }
 }
 
