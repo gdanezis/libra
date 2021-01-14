@@ -188,16 +188,18 @@ impl<'a> StateView for VerifiedStateView<'a> {
         };
 
         // Now enter the locked region, and write if still empty.
+        let new_account_blob = account_blob_option
+            .as_ref()
+            .map(TryInto::try_into)
+            .transpose()?
+            .unwrap_or_default();
+
         match self.account_to_state_cache.write().entry(address) {
             Entry::Occupied(occupied) => Ok(occupied.get().get(path).cloned()),
             Entry::Vacant(vacant) => {
                 Ok(vacant
                     .insert(
-                        account_blob_option
-                            .as_ref()
-                            .map(TryInto::try_into)
-                            .transpose()?
-                            .unwrap_or_default(),
+                        new_account_blob
                     )
                     .get(path)
                     .cloned())

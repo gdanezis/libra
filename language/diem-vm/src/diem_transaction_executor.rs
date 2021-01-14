@@ -1116,11 +1116,23 @@ impl VMExecutor for DiemVM {
             ))
         });
 
+        let execute_start = std::time::Instant::now();
+        let num_txns = transactions.len();
+
         let output = Self::execute_block_and_keep_vm_status(transactions, state_view)?;
-        Ok(output
+        let result = Ok(output
             .into_iter()
             .map(|(_vm_status, txn_output)| txn_output)
-            .collect())
+            .collect());
+
+        let execute_time = std::time::Instant::now().duration_since(execute_start);
+        println!(
+            "Full block. Execute time: {} ms. TPS: {}.",
+            execute_time.as_millis(),
+            num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
+        );
+
+        result
     }
 }
 
