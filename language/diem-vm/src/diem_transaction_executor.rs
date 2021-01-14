@@ -797,6 +797,7 @@ impl DiemVM {
         use crate::scheduler_parallel::{
             WritesPlaceholder,
             VersionedStateView,
+            SingleThreadReadCache
         };
 
         // Update the dependency analysis structure. We only do this for blocks that
@@ -920,8 +921,10 @@ impl DiemVM {
             println!("Launching {} threads to execute ...", cpus-1);
             for _ in 0..(cpus-1) {
                 s.spawn( |_| {
-                    // Make a new VM per thread
-                    let thread_vm = DiemVM::new(data_cache);
+                    // Make a per thread cache to de-congest mem bus
+                    let thread_data_cache = SingleThreadReadCache::new(data_cache);
+                    // Make a new VM per thread -- with its own module cache
+                    let thread_vm = DiemVM::new(&thread_data_cache);
 
                     let mut params = Vec::with_capacity(20);
                     let mut tx_idx_ring_buffer = VecDeque::with_capacity(10);
@@ -957,7 +960,7 @@ impl DiemVM {
 
                                     // Create the dependency structure
                                     let deps = read_write_infer.get(script.code()).unwrap();
-                                    let versioned_state_view = VersionedStateView::new(idx, data_cache, &placeholders);
+                                    let versioned_state_view = VersionedStateView::new(idx, &thread_data_cache, &placeholders);
 
                                     // Delay and move to next tx if cannot execure now.
                                     if deps.reads(&params).any(|k| versioned_state_view.will_read_block(&k) ) {

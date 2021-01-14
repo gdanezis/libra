@@ -329,6 +329,8 @@ impl<'view> VersionedStateView<'view>{
 impl<'block> StateView for VersionedStateView<'block> {
     // Get some data either through the cache or the `StateView` on a cache miss.
     fn get(&self, access_path: &AccessPath) -> anyhow::Result<Option<Vec<u8>>> {
+        // println!("V{} {}", self.version, access_path);
+
 
         let mut loop_iterations = 0;
         loop {
@@ -342,11 +344,6 @@ impl<'block> StateView for VersionedStateView<'block> {
 
             // Read is a success
             if let Ok(data) = read {
-                /*
-                if loop_iterations != 0 {
-                    println!("BLOCK ON {} ver={} iter={}", access_path, self.version, loop_iterations);
-                }
-                */
                 return Ok(data);
             }
 
@@ -357,20 +354,53 @@ impl<'block> StateView for VersionedStateView<'block> {
             else
             {
                 thread::sleep(ONE_MILLISEC);
-
-                /*
-                if loop_iterations % 10 == 0 {
-                    if let Err(Some(key)) = read {
-                        println!("Wait on: {:?}", key);
-                    }
-
-                    println!("BIG BLOCK ON {} ver={} iter={}", access_path, self.version, loop_iterations);
-                }
-                */
             }
         }
 
 
+    }
+
+    fn multi_get(&self, _access_paths: &[AccessPath]) -> anyhow::Result<Vec<Option<Vec<u8>>>> {
+        unimplemented!()
+    }
+
+    fn is_genesis(&self) -> bool {
+        self.base_view.is_genesis()
+    }
+
+    fn id(&self) -> StateViewId {
+        self.base_view.id()
+    }
+}
+
+use std::collections::HashMap;
+use std::cell::RefCell;
+
+pub struct SingleThreadReadCache<'view> {
+    base_view : &'view dyn StateView,
+    cache : RefCell<HashMap<AccessPath, Option<Vec<u8>>>>,
+}
+
+impl<'view> SingleThreadReadCache<'view> {
+    pub fn new(base_view: &'view StateView) -> SingleThreadReadCache<'view> {
+        SingleThreadReadCache {
+            base_view,
+            cache : RefCell::new(HashMap::new()),
+        }
+    }
+}
+
+impl<'view> StateView for SingleThreadReadCache<'view> {
+    // Get some data either through the cache or the `StateView` on a cache miss.
+    fn get(&self, access_path: &AccessPath) -> anyhow::Result<Option<Vec<u8>>> {
+        if self.cache.borrow().contains_key(access_path) {
+            Ok(self.cache.borrow().get(access_path).unwrap().clone())
+        }
+        else {
+            let val = self.base_view.get(access_path)?;
+            self.cache.borrow_mut().insert(access_path.clone(), val.clone());
+            Ok(val)
+        }
     }
 
     fn multi_get(&self, _access_paths: &[AccessPath]) -> anyhow::Result<Vec<Option<Vec<u8>>>> {
