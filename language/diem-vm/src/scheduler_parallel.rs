@@ -58,6 +58,10 @@ impl WritesStructCreator {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
 }
 
 /// A structure that holds placeholders for each write to the database

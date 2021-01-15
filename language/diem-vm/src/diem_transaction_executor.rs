@@ -847,7 +847,7 @@ impl DiemVM {
 
         // Analyse each user script for its write-set and create the placeholder structure
         // that allows for parallel execution.
-        let mut placeholder_struct = signature_verified_block.par_iter().enumerate().fold( || WritesStructCreator::new(),
+        let mut placeholder_struct = signature_verified_block.par_iter().enumerate().with_min_len(1000).fold( || WritesStructCreator::new(),
             |mut placeholder : WritesStructCreator, (idx, txn)| {
             if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
                 match user_txn.payload() {
@@ -893,6 +893,7 @@ impl DiemVM {
         }).reduce(
             || WritesStructCreator::new(),
             |mut placeholder0, placeholder1| {
+                println!("Merge {} {}", placeholder0.len(), placeholder1.len());
                 placeholder0.merge_with(placeholder1);
                 placeholder0
             }
