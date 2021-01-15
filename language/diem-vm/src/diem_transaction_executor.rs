@@ -995,11 +995,11 @@ impl DiemVM {
                                                         WriteOp::Value(data) => Some(data.clone()),
                                                     };
 
-                                                    placeholders.write(k.clone(), idx, val).unwrap();
+                                                    placeholders.write(k, idx, val).unwrap();
                                                 }
 
                                                 for w in deps.writes(&params) {
-                                                    placeholders.skip_if_not_set(w, idx).unwrap();
+                                                    placeholders.skip_if_not_set(&w, idx).unwrap();
                                                 }
 
                                                 // Commit the results to the data cache
@@ -1007,7 +1007,7 @@ impl DiemVM {
                                             } else {
 
                                                 for w in deps.writes(&params) {
-                                                    placeholders.skip(w, idx).unwrap();
+                                                    placeholders.skip(&w, idx).unwrap();
                                                 }
 
                                                 placeholders.set_result(idx, (vm_status, output), false);

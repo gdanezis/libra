@@ -22,7 +22,7 @@ unsafe impl Sync for WritesPlaceholder {}
 
 
 pub(crate) struct WritesStructCreator {
-    data: Vec<(WriteVersionKey, WriteVersionValue)>,
+    data: Vec<(AccessPath, usize, WriteVersionValue)>,
     results : usize
 }
 
@@ -47,19 +47,29 @@ impl WritesStructCreator {
     }
 
     pub fn add_placeholder(&mut self, key: AccessPath, version: usize) {
-        let key = WriteVersionKey::new(key, version);
+        // let key = WriteVersionKey::new();
         let value = WriteVersionValue::new();
-        self.data.push((key, value));
+        self.data.push((key, version, value));
     }
 
     pub fn freeze(self) -> WritesPlaceholder {
+
+        let mut data = HashMap::new();
+        for (path, version, entry) in self.data {
+            data.entry(path).or_insert(BTreeMap::new()).insert(version, entry);
+        }
+
         WritesPlaceholder {
-            data: self.data.into_iter().collect(),
+            data,
             results : (0..self.results).map(|_| UnsafeCell::new(None)).collect(),
 
             success_num : AtomicUsize::new(0),
             failure_num : AtomicUsize::new(0),
         }
+
+
+
+
     }
 
     pub fn len(&self) -> usize {
@@ -79,7 +89,7 @@ impl WritesStructCreator {
 //  but no entries can be added or deleted.
 //
 pub(crate) struct WritesPlaceholder {
-    data: BTreeMap<WriteVersionKey, WriteVersionValue>,
+    data: HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>,
     results : Vec<UnsafeCell<Option<(VMStatus, TransactionOutput)>>>,
 
     success_num : AtomicUsize,
@@ -90,7 +100,7 @@ pub(crate) struct WritesPlaceholder {
 impl WritesPlaceholder {
     pub fn new(len : usize) -> WritesPlaceholder {
         WritesPlaceholder {
-            data: BTreeMap::new(),
+            data: HashMap::new(),
             results : (0..len).map(|_| UnsafeCell::new(None)).collect(),
 
             success_num : AtomicUsize::new(0),
@@ -106,12 +116,15 @@ impl WritesPlaceholder {
             *mut_entry = Some(res);
         }
 
-        if success {
-            self.success_num.fetch_add(1, Ordering::Relaxed);
-        }
-        else
+        #[cfg(test)]
         {
-            self.failure_num.fetch_add(1, Ordering::Relaxed);
+            if success {
+                self.success_num.fetch_add(1, Ordering::Relaxed);
+            }
+            else
+            {
+                self.failure_num.fetch_add(1, Ordering::Relaxed);
+            }
         }
 
     }
@@ -132,7 +145,7 @@ impl WritesPlaceholder {
         self.data.len()
     }
 
-    pub fn write(&self, key: AccessPath, version: usize, data: Option<Vec<u8>>) -> Result<(), ()> {
+    pub fn write(&self, key: &AccessPath, version: usize, data: Option<Vec<u8>>) -> Result<(), ()> {
         // By construction there will only be a single writer, before the
         // write there will be no readers on the variable.
         // So it is safe to go ahead and write without any further check.
@@ -140,10 +153,10 @@ impl WritesPlaceholder {
 
         let entry = self
             .data
-            .get(&WriteVersionKey::new(key, version))
-            .ok_or_else(|| ())?;
+            .get(key)
+            .ok_or_else(|| ())?.get(&version).ok_or_else(|| ())?;
 
-        // #[cfg(test)]
+        #[cfg(test)]
         {
             // Test the invariant holds
             let flag = entry.flag.load(Ordering::Acquire);
@@ -163,14 +176,13 @@ impl WritesPlaceholder {
     }
 
 
-    pub fn skip_if_not_set(&self, key: AccessPath, version: usize) -> Result<(), ()> {
+    pub fn skip_if_not_set(&self, key: &AccessPath, version: usize) -> Result<(), ()> {
         // We only write or skip once per entry
         // So it is safe to go ahead and just do it.
-        let key = WriteVersionKey::new(key, version);
         let entry = self
             .data
-            .get(&key)
-            .ok_or_else(|| ())?;
+            .get(key)
+            .ok_or_else(|| ())?.get(&version).ok_or_else(|| ())?;
 
         // Test the invariant holds
         let flag = entry.flag.load(Ordering::Acquire);
@@ -182,14 +194,13 @@ impl WritesPlaceholder {
     }
 
 
-    pub fn skip(&self, key: AccessPath, version: usize) -> Result<(), ()> {
+    pub fn skip(&self, key: &AccessPath, version: usize) -> Result<(), ()> {
         // We only write or skip once per entry
         // So it is safe to go ahead and just do it.
-        let key = WriteVersionKey::new(key, version);
         let entry = self
             .data
-            .get(&key)
-            .ok_or_else(|| ())?;
+            .get(key)
+            .ok_or_else(|| ())?.get(&version).ok_or_else(|| ())?;
 
         #[cfg(test)]
         {
@@ -207,24 +218,26 @@ impl WritesPlaceholder {
 
     pub fn read(
         &self,
-        key: AccessPath,
+        key: &AccessPath,
         version: usize,
-    ) -> Result<Option<Vec<u8>>, Option<WriteVersionKey>> {
+    ) -> Result<Option<Vec<u8>>, Option<usize>> {
 
         // Get the smaller key
-        use std::ops::Bound::Excluded;
-        let key_end = WriteVersionKey::new(key.clone(), version);
-        let key_zero = WriteVersionKey::new(key, 0_usize);
-        let mut iter = self.data.range(key_zero..key_end);
+        let tree = self
+            .data
+            .get(key)
+            .ok_or_else(|| None )?;
+
+        let mut iter = tree.range(0..version);
 
         while let Some((entry_key, entry_val)) = iter.next_back() {
-            if entry_key.version < version {
+            if *entry_key < version {
 
                 let flag = entry_val.flag.load(Ordering::Acquire);
 
                 // Return this key, must wait.
                 if flag == FLAG_UNASSIGNED {
-                    return Err(Some(entry_key.clone()))
+                    return Err(Some(*entry_key))
                 }
 
                 // If we are to skip this entry, pick the next one
@@ -361,7 +374,7 @@ impl<'view> VersionedStateView<'view>{
     }
 
     pub fn will_read_block(&self, access_path: &AccessPath) -> bool {
-        let read = self.placeholder.read(access_path.clone(), self.version);
+        let read = self.placeholder.read(access_path, self.version);
         if let Err(Some(_)) = read {
             return true;
         }
@@ -379,7 +392,7 @@ impl<'block> StateView for VersionedStateView<'block> {
         let mut loop_iterations = 0;
         loop {
 
-            let read = self.placeholder.read(access_path.clone(), self.version);
+            let read = self.placeholder.read(access_path, self.version);
 
             // Go to the Database
             if let Err(None) = read{
