@@ -833,7 +833,7 @@ impl DiemVM {
             // This is time consuming so don't wait and do the checking
             // sequentially while executing the transactions.
             transactions
-                .clone()
+                // .clone()
                 .into_par_iter()
                 .map(preprocess_transaction)
                 .collect_into_vec(&mut signature_verified_block);
@@ -1041,7 +1041,7 @@ impl DiemVM {
 
         // Explicit drops to measure their cost.
         drop(signature_verified_block);
-        drop(transactions);
+        // drop(transactions);
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
         println!(
