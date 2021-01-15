@@ -854,7 +854,11 @@ impl DiemVM {
 
         // Analyse each user script for its write-set and create the placeholder structure
         // that allows for parallel execution.
-        let mut placeholder_struct = signature_verified_block.par_iter().enumerate().with_min_len(chunks).fold( || WritesStructCreator::new(),
+        let mut placeholder_struct = signature_verified_block
+                .par_iter()
+                .enumerate()
+                .with_min_len(chunks)
+                .fold( || WritesStructCreator::new(),
             |mut placeholder : WritesStructCreator, (idx, txn)| {
             if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
                 match user_txn.payload() {
@@ -1037,11 +1041,9 @@ impl DiemVM {
         let execute_start = std::time::Instant::now();
         let (num_success, num_fail) = placeholders.get_stats();
         println!("Block: {} success, {} failures", num_success, num_fail);
-        let all_results = placeholders.get_all_results();
 
-        // Explicit drops to measure their cost.
-        drop(signature_verified_block);
-        // drop(transactions);
+        let all_results = placeholders.get_all_results();
+        drop(signature_verified_block); // Explicit drops to measure their cost.
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
         println!(

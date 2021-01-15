@@ -10,6 +10,8 @@ use diem_types::{
     vm_status::{VMStatus, },
 };
 
+use rayon::prelude::*;
+
 
 use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
@@ -20,7 +22,7 @@ unsafe impl Sync for WritesPlaceholder {}
 
 
 pub(crate) struct WritesStructCreator {
-    data: BTreeMap<WriteVersionKey, WriteVersionValue>,
+    data: Vec<(WriteVersionKey, WriteVersionValue)>,
     results : usize
 }
 
@@ -28,7 +30,7 @@ impl WritesStructCreator {
 
     pub fn new() -> WritesStructCreator {
         WritesStructCreator {
-            data: BTreeMap::new(),
+            data: Vec::new(),
             results : 0
         }
     }
@@ -47,12 +49,12 @@ impl WritesStructCreator {
     pub fn add_placeholder(&mut self, key: AccessPath, version: usize) {
         let key = WriteVersionKey::new(key, version);
         let value = WriteVersionValue::new();
-        self.data.insert(key, value);
+        self.data.push((key, value));
     }
 
     pub fn freeze(self) -> WritesPlaceholder {
         WritesPlaceholder {
-            data: self.data,
+            data: self.data.into_iter().collect(),
             results : (0..self.results).map(|_| UnsafeCell::new(None)).collect(),
 
             success_num : AtomicUsize::new(0),
@@ -122,9 +124,7 @@ impl WritesPlaceholder {
 
         let results = self.results;
         Ok(results.into_iter().map(|entry| {
-            let val = unsafe { &mut *entry.get() };
-            let val = val.take();
-            val.expect("ERROR: WE EXPECT ALL ENTRIES TO BE POPULATED WITH A RESULT!")
+            entry.into_inner().unwrap()
         }).collect())
     }
 
