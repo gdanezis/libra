@@ -802,9 +802,12 @@ impl DiemVM {
             VersionedStateView,
             SingleThreadReadCache
         };
+        use num_cpus;
 
         // Count and print the number of transactions.
         let num_txns = transactions.len();
+        let cpus = num_cpus::get();
+        let chunks = max(1, num_txns / cpus);
         let mut should_restart = false;
         println!("Executing block, transaction count: {}", num_txns);
 
@@ -849,12 +852,9 @@ impl DiemVM {
 
         let execute_start = std::time::Instant::now();
 
-        use num_cpus;
-        let cpus = num_cpus::get();
-
         // Analyse each user script for its write-set and create the placeholder structure
         // that allows for parallel execution.
-        let mut placeholder_struct = signature_verified_block.par_iter().enumerate().with_min_len(1000).fold( || WritesStructCreator::new(),
+        let mut placeholder_struct = signature_verified_block.par_iter().enumerate().with_min_len(chunks).fold( || WritesStructCreator::new(),
             |mut placeholder : WritesStructCreator, (idx, txn)| {
             if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
                 match user_txn.payload() {
