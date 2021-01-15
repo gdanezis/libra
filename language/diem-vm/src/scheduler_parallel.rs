@@ -19,6 +19,47 @@ unsafe impl Send for WritesPlaceholder {}
 unsafe impl Sync for WritesPlaceholder {}
 
 
+pub(crate) struct WritesStructCreator {
+    data: BTreeMap<WriteVersionKey, WriteVersionValue>,
+    results : usize
+}
+
+impl WritesStructCreator {
+
+    pub fn new() -> WritesStructCreator {
+        WritesStructCreator {
+            data: BTreeMap::new(),
+            results : 0
+        }
+    }
+
+    pub fn merge_with(&mut self, later_placeholders: WritesStructCreator) {
+        self.data.extend(later_placeholders.data);
+        self.results += later_placeholders.results;
+    }
+
+    pub fn inc_result(&mut self) {
+        self.results += 1;
+    }
+
+    pub fn add_placeholder(&mut self, key: AccessPath, version: usize) {
+        let key = WriteVersionKey::new(key, version);
+        let value = WriteVersionValue::new();
+        self.data.insert(key, value);
+    }
+
+    pub fn freeze(self) -> WritesPlaceholder {
+        WritesPlaceholder {
+            data: self.data,
+            results : (0..self.results).map(|_| UnsafeCell::new(None)).collect(),
+
+            success_num : AtomicUsize::new(0),
+            failure_num : AtomicUsize::new(0),
+        }
+    }
+
+}
+
 /// A structure that holds placeholders for each write to the database
 //
 //  The structure is created by one thread creating the scheduling, and
@@ -36,6 +77,7 @@ pub(crate) struct WritesPlaceholder {
     success_num : AtomicUsize,
     failure_num : AtomicUsize,
 }
+
 
 impl WritesPlaceholder {
     pub fn new(len : usize) -> WritesPlaceholder {
@@ -82,12 +124,6 @@ impl WritesPlaceholder {
 
     pub fn len(&self) -> usize {
         self.data.len()
-    }
-
-    pub fn add_placeholder(&mut self, key: AccessPath, version: usize) {
-        let key = WriteVersionKey::new(key, version);
-        let value = WriteVersionValue::new();
-        self.data.insert(key, value);
     }
 
     pub fn write(&self, key: AccessPath, version: usize, data: Option<Vec<u8>>) -> Result<(), ()> {
@@ -254,12 +290,14 @@ mod tests {
             path: b"/foo/c".to_vec(),
         };
 
-        let mut placeholder = WritesPlaceholder::new();
+        let mut placeholder = WritesStructCreator::new();
 
         // Check structure creation
         placeholder.add_placeholder(ap1.clone(), 10);
         placeholder.add_placeholder(ap2.clone(), 10);
         placeholder.add_placeholder(ap2.clone(), 20);
+
+        let placeholder = placeholder.freeze();
 
         assert_eq!(3, placeholder.len());
 

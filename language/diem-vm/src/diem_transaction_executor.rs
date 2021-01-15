@@ -795,6 +795,7 @@ impl DiemVM {
     ) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus> {
 
         use crate::scheduler_parallel::{
+            WritesStructCreator,
             WritesPlaceholder,
             VersionedStateView,
             SingleThreadReadCache
@@ -837,22 +838,22 @@ impl DiemVM {
 
         let execute_start = std::time::Instant::now();
 
-        let mut versioning = HashMap::new();
+        // let mut versioning = HashMap::new();
         let mut max_dependency = 0;
-        let mut placeholders = WritesPlaceholder::new(signature_verified_block.len());
+        // let mut placeholders = WritesPlaceholder::new(signature_verified_block.len());
 
         use num_cpus;
         let cpus = num_cpus::get();
 
         // Analyse each user script for its write-set and create the placeholder structure
         // that allows for parallel execution.
-        let mut params = Vec::with_capacity(20);
-        for (idx, txn) in signature_verified_block.iter().enumerate() {
+        let mut placeholder_struct = signature_verified_block.par_iter().enumerate().fold( || WritesStructCreator::new(),
+            |mut placeholder : WritesStructCreator, (idx, txn)| {
             if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
                 match user_txn.payload() {
                     TransactionPayload::Script(script) => {
                         // If the transaction is not known, then execute it to infer its read/write logic.
-                        params.clear();
+                        let mut params = Vec::with_capacity(5);
                         params.push(user_txn.sender());
                         for arg in script.args() {
                             if let TransactionArgument::Address(address) = arg {
@@ -860,10 +861,12 @@ impl DiemVM {
                             }
                         }
 
+                        placeholder.inc_result();
                         // Create the dependency structure
                         let deps = read_write_infer.get(script.code()).unwrap();
                         for w in deps.writes(&params) {
                             // Track longest chains
+                            /*
                             if versioning.contains_key(&w) {
                                 let mut_val = versioning.get_mut(&w).unwrap();
                                 *mut_val += 1;
@@ -875,23 +878,27 @@ impl DiemVM {
                                 versioning.insert(w.clone(), 1);
                                 max_dependency = max(max_dependency, 1);
                             }
+                            */
 
 
                             // Update the placeholder structure
-                            placeholders.add_placeholder(w, idx);
+                            placeholder.add_placeholder(w, idx);
                         }
 
                     }
-                    _ => {
-                        println!("NON SCIPT TRANSACTION");
-                        return self.execute_block_impl(transactions, data_cache, false);
-                    }
+                    _ => { unreachable!() }
                 }
-            } else {
-                println!("NON USER TRANSACTION");
-                return self.execute_block_impl(transactions, data_cache, false);
+            } else { unreachable!() }
+            placeholder
+        }).reduce(
+            || WritesStructCreator::new(),
+            |mut placeholder0, placeholder1| {
+                placeholder0.merge_with(placeholder1);
+                placeholder0
             }
-        }
+        );
+
+        let placeholders = placeholder_struct.freeze();
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
 
