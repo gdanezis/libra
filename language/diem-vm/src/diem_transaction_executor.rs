@@ -794,6 +794,8 @@ impl DiemVM {
         data_cache: &mut StateViewCache,
     ) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus> {
 
+        let mut exec_tally : u128 = 0;
+
         use crate::scheduler_parallel::{
             WritesStructCreator,
             WritesPlaceholder,
@@ -801,32 +803,40 @@ impl DiemVM {
             SingleThreadReadCache
         };
 
-        // Update the dependency analysis structure. We only do this for blocks that
-        // purely consist of UserTransactions (Extending this is a TODO). If non-user
-        // transactions are detected this returns and err, and we revert to sequential
-        // block processing.
-        let mut infer_result = self.dependency_structure_hack(&transactions, data_cache);
-        let read_write_infer = match infer_result {
-            Err(_) => return self.execute_block_impl(transactions, data_cache, false),
-            Ok(val) => val,
-        };
-
         // Count and print the number of transactions.
         let num_txns = transactions.len();
         let mut should_restart = false;
         println!("Executing block, transaction count: {}", num_txns);
 
+        // Update the dependency analysis structure. We only do this for blocks that
+        // purely consist of UserTransactions (Extending this is a TODO). If non-user
+        // transactions are detected this returns and err, and we revert to sequential
+        // block processing.
         let execute_start = std::time::Instant::now();
-        let mut signature_verified_block: Vec<Result<PreprocessedTransaction, VMStatus>>;
+        let mut infer_result = self.dependency_structure_hack(&transactions, data_cache);
+        let read_write_infer = match infer_result {
+            Err(_) => return self.execute_block_impl(transactions, data_cache, false),
+            Ok(val) => val,
+        };
+        let execute_time = std::time::Instant::now().duration_since(execute_start);
+        println!(
+            "Check Dependencies. Execute time: {} ms. TPS: {}.",
+            execute_time.as_millis(),
+            num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
+        );
+        exec_tally += execute_time.as_millis();
+
+        let execute_start = std::time::Instant::now();
+        let mut signature_verified_block: Vec<Result<PreprocessedTransaction, VMStatus>> = Vec::new();
         {
             // Verify the signatures of all the transactions in parallel.
             // This is time consuming so don't wait and do the checking
             // sequentially while executing the transactions.
-            signature_verified_block = transactions
+            transactions
                 .clone()
                 .into_par_iter()
                 .map(preprocess_transaction)
-                .collect();
+                .collect_into_vec(&mut signature_verified_block);
         }
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
@@ -835,12 +845,9 @@ impl DiemVM {
             execute_time.as_millis(),
             num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
         );
+        exec_tally += execute_time.as_millis();
 
         let execute_start = std::time::Instant::now();
-
-        // let mut versioning = HashMap::new();
-        let mut max_dependency = 0;
-        // let mut placeholders = WritesPlaceholder::new(signature_verified_block.len());
 
         use num_cpus;
         let cpus = num_cpus::get();
@@ -865,22 +872,6 @@ impl DiemVM {
                         // Create the dependency structure
                         let deps = read_write_infer.get(script.code()).unwrap();
                         for w in deps.writes(&params) {
-                            // Track longest chains
-                            /*
-                            if versioning.contains_key(&w) {
-                                let mut_val = versioning.get_mut(&w).unwrap();
-                                *mut_val += 1;
-                                max_dependency = max(max_dependency, *mut_val);
-
-                            }
-                            else
-                            {
-                                versioning.insert(w.clone(), 1);
-                                max_dependency = max(max_dependency, 1);
-                            }
-                            */
-
-
                             // Update the placeholder structure
                             placeholder.add_placeholder(w, idx);
                         }
@@ -893,7 +884,7 @@ impl DiemVM {
         }).reduce(
             || WritesStructCreator::new(),
             |mut placeholder0, placeholder1| {
-                println!("Merge {} {}", placeholder0.len(), placeholder1.len());
+                // println!("Merge {} {}", placeholder0.len(), placeholder1.len());
                 placeholder0.merge_with(placeholder1);
                 placeholder0
             }
@@ -908,12 +899,15 @@ impl DiemVM {
             execute_time.as_millis(),
             num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
         );
+        exec_tally += execute_time.as_millis();
 
+        /*
         println!("Max dependency: {}", max_dependency);
         if max_dependency > transactions.len() / 4 {
             println!("REVERT TO SEQUENTIAL");
             return self.execute_block_impl(transactions, data_cache, false);
         }
+        */
 
         use rayon::scope;
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1038,11 +1032,27 @@ impl DiemVM {
             execute_time.as_millis(),
             num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
         );
-
+        exec_tally += execute_time.as_millis();
+        //
+        let execute_start = std::time::Instant::now();
         let (num_success, num_fail) = placeholders.get_stats();
         println!("Block: {} success, {} failures", num_success, num_fail);
+        let all_results = placeholders.get_all_results();
 
-        return placeholders.get_all_results();
+        // Explicit drops to measure their cost.
+        drop(signature_verified_block);
+        drop(transactions);
+
+        let execute_time = std::time::Instant::now().duration_since(execute_start);
+        println!(
+            "Extract results. Execute time: {} ms. TPS: {}.",
+            execute_time.as_millis(),
+            num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
+        );
+        exec_tally += execute_time.as_millis();
+        println!("Exec tally: {}ms", exec_tally);
+
+        all_results
     }
 
     fn execute_block_impl(

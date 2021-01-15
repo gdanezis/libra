@@ -34,6 +34,8 @@ impl WritesStructCreator {
     }
 
     pub fn merge_with(&mut self, later_placeholders: WritesStructCreator) {
+        // Looked at the code of BTreeMap.extend -- it does nothing special
+        // and simply itrates through all entries to do .insert(k, v).
         self.data.extend(later_placeholders.data);
         self.results += later_placeholders.results;
     }
