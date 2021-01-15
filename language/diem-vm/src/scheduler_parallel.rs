@@ -123,17 +123,10 @@ impl WritesPlaceholder {
     pub fn get_all_results(self) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>{
 
         let (results, data) = (self.results, self.data);
-        let (output, _) = rayon::join(
-            || {
-
-                Ok(results.into_iter().map(|entry| {
+        Ok(results.into_iter().map(|entry| {
                     entry.into_inner().unwrap()
                 }).collect())
-            },
-            || drop(data)
-        );
-        output
-    }
+        }
 
     pub fn len(&self) -> usize {
         self.data.len()
