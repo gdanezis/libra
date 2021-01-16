@@ -898,9 +898,8 @@ impl DiemVM {
         let execute_start = std::time::Instant::now();
 
         let path_version_tuples : Vec<(AccessPath, usize)> = path_version_tuples.into_iter().flatten().collect();
-
         fn split_merge(num_cpus : usize, num: usize, split: Vec<(AccessPath, usize)>) -> HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>> {
-            println!("Split Size {} --level:{}", split.len(), num);
+            //println!("Split Size {} --level:{}", split.len(), num);
             if ((2 << num) > num_cpus) || split.len() < 1000 {
                 let mut data = HashMap::new();
                 for (path, version) in split.into_iter() {
