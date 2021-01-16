@@ -20,64 +20,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 unsafe impl Send for WritesPlaceholder {}
 unsafe impl Sync for WritesPlaceholder {}
 
-
-pub(crate) struct WritesStructCreator {
-    data: Vec<(AccessPath, usize, WriteVersionValue)>,
-    results : usize
-}
-
-impl WritesStructCreator {
-
-    pub fn new() -> WritesStructCreator {
-        WritesStructCreator {
-            data: Vec::new(),
-            results : 0
-        }
-    }
-
-    pub fn merge_with(&mut self, later_placeholders: WritesStructCreator) {
-        // Looked at the code of BTreeMap.extend -- it does nothing special
-        // and simply itrates through all entries to do .insert(k, v).
-        self.data.extend(later_placeholders.data);
-        self.results += later_placeholders.results;
-    }
-
-    pub fn inc_result(&mut self) {
-        self.results += 1;
-    }
-
-    pub fn add_placeholder(&mut self, key: AccessPath, version: usize) {
-        // let key = WriteVersionKey::new();
-        let value = WriteVersionValue::new();
-        self.data.push((key, version, value));
-    }
-
-    pub fn freeze(self) -> WritesPlaceholder {
-
-        let mut data = HashMap::new();
-        for (path, version, entry) in self.data {
-            data.entry(path).or_insert(BTreeMap::new()).insert(version, entry);
-        }
-
-        WritesPlaceholder {
-            data,
-            results : (0..self.results).map(|_| UnsafeCell::new(None)).collect(),
-
-            success_num : AtomicUsize::new(0),
-            failure_num : AtomicUsize::new(0),
-        }
-
-
-
-
-    }
-
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
-
-}
-
 /// A structure that holds placeholders for each write to the database
 //
 //  The structure is created by one thread creating the scheduling, and
@@ -90,18 +32,30 @@ impl WritesStructCreator {
 //
 pub(crate) struct WritesPlaceholder {
     data: HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>,
-    results : Vec<UnsafeCell<Option<(VMStatus, TransactionOutput)>>>,
+    results : Vec<UnsafeCell<(VMStatus, TransactionOutput)>>,
 
     success_num : AtomicUsize,
     failure_num : AtomicUsize,
 }
 
 
+use diem_types::{
+    transaction::{
+        TransactionStatus,
+    },
+    write_set::{WriteSet, },
+};
+
 impl WritesPlaceholder {
     pub fn new(len : usize) -> WritesPlaceholder {
         WritesPlaceholder {
             data: HashMap::new(),
-            results : (0..len).map(|_| UnsafeCell::new(None)).collect(),
+            results : (0..len).map(|_| UnsafeCell::new((VMStatus::Executed, TransactionOutput::new(
+                WriteSet::default(),
+                vec![],
+                0,
+                TransactionStatus::Retry,
+            )))).collect(),
 
             success_num : AtomicUsize::new(0),
             failure_num : AtomicUsize::new(0),
@@ -111,7 +65,12 @@ impl WritesPlaceholder {
     pub fn new_from(data:HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>, len : usize) -> WritesPlaceholder {
         WritesPlaceholder {
             data,
-            results : (0..len).map(|_| UnsafeCell::new(None)).collect(),
+            results : (0..len).map(|_| UnsafeCell::new((VMStatus::Executed, TransactionOutput::new(
+                WriteSet::default(),
+                vec![],
+                0,
+                TransactionStatus::Retry,
+            )))).collect(),
 
             success_num : AtomicUsize::new(0),
             failure_num : AtomicUsize::new(0),
@@ -120,10 +79,11 @@ impl WritesPlaceholder {
 
     pub fn set_result(&self, idx:usize, res: (VMStatus, TransactionOutput), success : bool) {
         // Only one thread can write at the time, so just set it.
+
         let entry = &self.results[idx];
         unsafe {
             let mut_entry = &mut*entry.get();
-            *mut_entry = Some(res);
+            *mut_entry = res;
         }
 
         #[cfg(test)]
@@ -146,10 +106,12 @@ impl WritesPlaceholder {
     pub fn get_all_results(self) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>{
 
         let (results, data) = (self.results, self.data);
-        Ok(results.into_iter().map(|entry| {
-                    entry.into_inner().unwrap()
-                }).collect())
-        }
+        Ok(
+            unsafe {
+                // This is safe since UnsafeCell has no runtime representation.
+                std::mem::transmute::<Vec<UnsafeCell<(VMStatus, TransactionOutput)>>, Vec<(VMStatus, TransactionOutput)>>(results)
+            })
+    }
 
     pub fn len(&self) -> usize {
         self.data.len()

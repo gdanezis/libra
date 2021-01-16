@@ -797,7 +797,6 @@ impl DiemVM {
         let mut exec_tally : u128 = 0;
 
         use crate::scheduler_parallel::{
-            WritesStructCreator,
             WritesPlaceholder,
             VersionedStateView,
             SingleThreadReadCache,
