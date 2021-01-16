@@ -1069,8 +1069,16 @@ impl DiemVM {
         let (num_success, num_fail) = placeholders.get_stats();
         println!("Block: {} success, {} failures", num_success, num_fail);
 
-        let all_results = placeholders.get_all_results();
-        drop(signature_verified_block); // Explicit drops to measure their cost.
+        let (all_results, data) = placeholders.get_all_results();
+
+        use std::thread;
+
+        thread::spawn(move || {
+            // Dropping large structures is expensive -- do this is a separate thread.
+            drop(signature_verified_block); // Explicit drops to measure their cost.
+            drop(data);
+        });
+
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
         println!(

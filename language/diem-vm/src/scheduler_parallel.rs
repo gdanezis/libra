@@ -96,21 +96,20 @@ impl WritesPlaceholder {
                 self.failure_num.fetch_add(1, Ordering::Relaxed);
             }
         }
-
     }
 
     pub fn get_stats(&self) -> (usize, usize) {
         return (self.success_num.load(Ordering::Relaxed), self.failure_num.load(Ordering::Relaxed))
     }
 
-    pub fn get_all_results(self) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>{
+    pub fn get_all_results(self) -> (Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>, HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>){
 
         let (results, data) = (self.results, self.data);
-        Ok(
+        (Ok(
             unsafe {
                 // This is safe since UnsafeCell has no runtime representation.
                 std::mem::transmute::<Vec<UnsafeCell<(VMStatus, TransactionOutput)>>, Vec<(VMStatus, TransactionOutput)>>(results)
-            })
+            }), data)
     }
 
     pub fn len(&self) -> usize {
@@ -281,44 +280,44 @@ mod tests {
             path: b"/foo/c".to_vec(),
         };
 
-        let mut placeholder = WritesStructCreator::new();
 
-        // Check structure creation
-        placeholder.add_placeholder(ap1.clone(), 10);
-        placeholder.add_placeholder(ap2.clone(), 10);
-        placeholder.add_placeholder(ap2.clone(), 20);
 
-        let placeholder = placeholder.freeze();
+        let mut data = HashMap::new();
+        for (path, version) in &[(ap1.clone(), 10),(ap2.clone(), 10),(ap2.clone(), 20)] {
+            data.entry(path.clone()).or_insert(BTreeMap::new()).insert(*version, WriteVersionValue::new());
+        }
 
-        assert_eq!(3, placeholder.len());
+        let mut placeholder = WritesPlaceholder::new_from(data, 2);
+
+        assert_eq!(2, placeholder.len());
 
         // Reads that should go the the DB return Err(None)
-        let r1 = placeholder.read(ap1.clone(), 5);
+        let r1 = placeholder.read(&ap1, 5);
         assert_eq!(Err(None), r1);
 
         // Reads at a version return the previous versions, not this
         // version.
-        let r1 = placeholder.read(ap1.clone(), 10);
+        let r1 = placeholder.read(&ap1, 10);
         assert_eq!(Err(None), r1);
 
         // Check reads into non-ready structs return the Err(entry)
 
         // Reads at a higher version return the previous version
-        let r1 = placeholder.read(ap1.clone(), 15);
-        assert_eq!(Err(Some(WriteVersionKey::new(ap1.clone(), 10))), r1);
+        let r1 = placeholder.read(&ap1, 15);
+        assert_eq!(Err(Some(10)), r1);
 
         // Writes populate the entry
-        let w1 = placeholder.write(ap1.clone(), 10, Some(vec![0, 0, 0]) );
+        let w1 = placeholder.write(&ap1, 10, Some(vec![0, 0, 0]) );
 
         // Subsequent higher reads read this entry
-        let r1 = placeholder.read(ap1.clone(), 15);
+        let r1 = placeholder.read(&ap1, 15);
         assert_eq!(Ok(Some(vec![0, 0, 0])), r1);
 
         // Set skip works
-        let w1 = placeholder.skip(ap1.clone(), 20);
+        let w1 = placeholder.skip(&ap1, 20);
 
         // Higher reads skip this entry
-        let r1 = placeholder.read(ap1.clone(), 25);
+        let r1 = placeholder.read(&ap1, 25);
         assert_eq!(Ok(Some(vec![0, 0, 0])), r1);
 
     }
