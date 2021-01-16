@@ -86,7 +86,7 @@ impl WritesPlaceholder {
             *mut_entry = res;
         }
 
-        #[cfg(test)]
+        // #[cfg(test)]
         {
             if success {
                 self.success_num.fetch_add(1, Ordering::Relaxed);

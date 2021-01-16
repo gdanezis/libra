@@ -897,14 +897,30 @@ impl DiemVM {
 
         let execute_start = std::time::Instant::now();
 
-        let mut data = HashMap::new();
-        for smaller_vec in path_version_tuples.into_iter() {
-            for (path, version) in smaller_vec {
-                data.entry(path).or_insert(BTreeMap::new()).insert(version, WriteVersionValue::new());
+        let path_version_tuples : Vec<(AccessPath, usize)> = path_version_tuples.into_iter().flatten().collect();
+
+        fn split_merge(num: usize, split: Vec<(AccessPath, usize)>) -> HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>> {
+            if !(num < 8) || split.len() < 1000 {
+                let mut data = HashMap::new();
+                for (path, version) in split.into_iter() {
+                    data.entry(path).or_insert(BTreeMap::new()).insert(version, WriteVersionValue::new());
+                }
+                data
+            }
+            else {
+                let pivot_address = split[split.len()/2].0.clone();
+                let (left, right): (Vec<_>, Vec<_>) = split.into_par_iter().partition(|(p,v)| *p < pivot_address);
+                let (mut left_map, right_map) = rayon::join(
+                    || split_merge(num + 1, left),
+                    || split_merge(num + 1, right),
+                );
+                left_map.extend(right_map);
+                left_map
             }
         }
 
-        use std::cell::UnsafeCell;
+        // use std::cell::UnsafeCell;
+        let data = split_merge(0, path_version_tuples);
         let placeholders = WritesPlaceholder::new_from(
             data,
             num_txns
