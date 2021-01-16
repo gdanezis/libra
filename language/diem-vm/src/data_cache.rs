@@ -18,7 +18,7 @@ use move_core_types::{
     account_address::AccountAddress,
     language_storage::{ModuleId, StructTag},
 };
-use move_vm_runtime::data_cache::RemoteCache;
+use move_vm_runtime::data_cache::{RemoteCache, RefBytes};
 use std::collections::btree_map::BTreeMap;
 use vm::errors::*;
 

@@ -16,6 +16,7 @@ use move_vm_types::{
 };
 use std::collections::btree_map::BTreeMap;
 use vm::errors::*;
+use std::ops::Deref;
 
 /// Trait for the Move VM to abstract storage operations.
 ///
@@ -43,6 +44,30 @@ pub trait RemoteCache {
         address: &AccountAddress,
         tag: &StructTag,
     ) -> PartialVMResult<Option<Vec<u8>>>;
+
+    fn get_resource_ref(
+        &self,
+        address: &AccountAddress,
+        tag: &StructTag,
+    ) -> PartialVMResult<Option<RefBytes>>{
+        self.get_resource(address, tag).map(|v| v.map(|v1| RefBytes::Bytes(v1)))
+    }
+}
+
+pub enum RefBytes<'life> {
+    Bytes(Vec<u8>),
+    Ref(&'life Vec<u8>)
+}
+
+impl<'life> Deref for RefBytes<'life> {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            RefBytes::Bytes(val) => &val,
+            RefBytes::Ref(xref)  => xref,
+        }
+    }
 }
 
 pub struct AccountDataCache {
@@ -206,7 +231,7 @@ impl<'r, 'l, C: RemoteCache> DataStore for TransactionDataCache<'r, 'l, C> {
             };
             let ty_layout = self.loader.type_to_type_layout(ty)?;
 
-            let gv = match self.remote.get_resource(&addr, &ty_tag) {
+            let gv = match self.remote.get_resource_ref(&addr, &ty_tag) {
                 Ok(Some(blob)) => {
                     let ty_kind_info = self.loader.type_to_kind_info(ty)?;
                     let val = match Value::simple_deserialize(&blob, &ty_kind_info, &ty_layout) {

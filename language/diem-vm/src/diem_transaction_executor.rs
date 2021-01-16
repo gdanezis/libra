@@ -64,13 +64,13 @@ impl DiemVM {
 
     /// Generates a transaction output for a transaction that encountered errors during the
     /// execution process. This is public for now only for tests.
-    pub fn failed_transaction_cleanup(
+    pub fn failed_transaction_cleanup<R: RemoteCache>(
         &self,
         error_code: VMStatus,
         gas_schedule: &CostTable,
         gas_left: GasUnits<GasCarrier>,
         txn_data: &TransactionMetadata,
-        remote_cache: &StateViewCache<'_>,
+        remote_cache: &R,
         account_currency_symbol: &IdentStr,
         log_context: &impl LogContext,
     ) -> TransactionOutput {
@@ -86,13 +86,13 @@ impl DiemVM {
         .1
     }
 
-    fn failed_transaction_cleanup_and_keep_vm_status(
+    fn failed_transaction_cleanup_and_keep_vm_status<R: RemoteCache>(
         &self,
         error_code: VMStatus,
         gas_schedule: &CostTable,
         gas_left: GasUnits<GasCarrier>,
         txn_data: &TransactionMetadata,
-        remote_cache: &StateViewCache<'_>,
+        remote_cache: &R,
         account_currency_symbol: &IdentStr,
         log_context: &impl LogContext,
     ) -> (VMStatus, TransactionOutput) {
@@ -157,9 +157,9 @@ impl DiemVM {
         ))
     }
 
-    fn execute_script(
+    fn execute_script<R: RemoteCache>(
         &self,
-        remote_cache: &StateViewCache<'_>,
+        remote_cache: &R,
         cost_strategy: &mut CostStrategy,
         txn_data: &TransactionMetadata,
         script: &Script,
@@ -205,9 +205,9 @@ impl DiemVM {
         }
     }
 
-    fn execute_module(
+    fn execute_module<R: RemoteCache>(
         &self,
-        remote_cache: &StateViewCache<'_>,
+        remote_cache: &R,
         cost_strategy: &mut CostStrategy,
         txn_data: &TransactionMetadata,
         module: &Module,
@@ -254,9 +254,9 @@ impl DiemVM {
         )
     }
 
-    fn execute_user_transaction(
+    fn execute_user_transaction<R : StateView + RemoteCache>(
         &self,
-        remote_cache: &StateViewCache<'_>,
+        remote_cache: &R,
         txn: &SignatureCheckedTransaction,
         log_context: &impl LogContext,
     ) -> (VMStatus, TransactionOutput) {
@@ -331,9 +331,9 @@ impl DiemVM {
         }
     }
 
-    fn execute_writeset(
+    fn execute_writeset<R: RemoteCache>(
         &self,
-        remote_cache: &StateViewCache<'_>,
+        remote_cache: &R,
         writeset_payload: &WriteSetPayload,
         txn_sender: Option<AccountAddress>,
         log_context: &impl LogContext,
@@ -375,9 +375,9 @@ impl DiemVM {
         })
     }
 
-    fn read_writeset(
+    fn read_writeset<S : StateView>(
         &self,
-        remote_cache: &StateViewCache<'_>,
+        remote_cache: &S,
         write_set: &WriteSet,
     ) -> Result<(), VMStatus> {
         // All Move executions satisfy the read-before-write property. Thus we need to read each
@@ -390,9 +390,9 @@ impl DiemVM {
         Ok(())
     }
 
-    fn process_waypoint_change_set(
+    fn process_waypoint_change_set<R : StateView+RemoteCache>(
         &self,
-        remote_cache: &StateViewCache<'_>,
+        remote_cache: &R,
         writeset_payload: WriteSetPayload,
         log_context: &impl LogContext,
     ) -> Result<(VMStatus, TransactionOutput), VMStatus> {
@@ -410,9 +410,9 @@ impl DiemVM {
         ))
     }
 
-    fn process_block_prologue(
+    fn process_block_prologue<R: RemoteCache>(
         &self,
-        remote_cache: &StateViewCache<'_>,
+        remote_cache: &R,
         block_metadata: BlockMetadata,
         log_context: &impl LogContext,
     ) -> Result<(VMStatus, TransactionOutput), VMStatus> {
@@ -462,9 +462,9 @@ impl DiemVM {
         Ok((VMStatus::Executed, output))
     }
 
-    fn process_writeset_transaction(
+    fn process_writeset_transaction<R : StateView + RemoteCache>(
         &self,
-        remote_cache: &StateViewCache<'_>,
+        remote_cache: &R,
         txn: SignatureCheckedTransaction,
         log_context: &impl LogContext,
     ) -> Result<(VMStatus, TransactionOutput), VMStatus> {
@@ -579,9 +579,9 @@ impl DiemVM {
         ))
     }
 
-    fn execute_single_txn(
+    fn execute_single_txn<R : StateView + RemoteCache>(
         &self,
-        data_cache: &StateViewCache,
+        data_cache: &R,
         txn: &Result<PreprocessedTransaction, VMStatus>,
         log_context: &impl LogContext,
     ) -> Result<(VMStatus, TransactionOutput, Option<String>), VMStatus> {
@@ -926,19 +926,6 @@ impl DiemVM {
             num_txns
         );
 
-        /*
-        let mut placeholder_struct = placeholder_struct.reduce(
-            || WritesStructCreator::new(),
-            |mut placeholder0, placeholder1| {
-                // println!("Merge {} {}", placeholder0.len(), placeholder1.len());
-                placeholder0.merge_with(placeholder1);
-                placeholder0
-            }
-        );
-
-        let placeholders = placeholder_struct.freeze();
-        */
-
         let execute_time = std::time::Instant::now().duration_since(execute_start);
 
         println!(
@@ -947,14 +934,6 @@ impl DiemVM {
             num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
         );
         exec_tally += execute_time.as_millis();
-
-        /*
-        println!("Max dependency: {}", max_dependency);
-        if max_dependency > transactions.len() / 4 {
-            println!("REVERT TO SEQUENTIAL");
-            return self.execute_block_impl(transactions, data_cache, false);
-        }
-        */
 
         use rayon::scope;
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -977,6 +956,9 @@ impl DiemVM {
 
                     let mut params = Vec::with_capacity(20);
                     let mut tx_idx_ring_buffer = VecDeque::with_capacity(10);
+
+                    let mut wait_num = 0_usize;
+                    let mut proceed_num = 0_usize;
 
                     loop {
 
@@ -1015,19 +997,18 @@ impl DiemVM {
                                     if deps.reads(&params).any(|k| versioned_state_view.will_read_block(&k) ) {
                                         // println!("Delay {}", idx);
                                         tx_idx_ring_buffer.push_back( (idx, txn) );
+                                        wait_num += 1;
 
                                         // This causes a PAUSE on an x64 arch, and takes 140 cycles. Allows other
                                         // core to take resources and better HT.
                                         ::std::sync::atomic::spin_loop_hint();
                                         continue
                                     }
+                                    proceed_num += 1;
 
-                                    let local_state_view_cache = StateViewCache::new(&versioned_state_view);
-
-                                    let log_context = AdapterLogSchema::new(local_state_view_cache.id(), idx);
                                     // Execute the transaction
-
-                                    let res = thread_vm.execute_single_txn(&local_state_view_cache, txn, &log_context);
+                                    let log_context = AdapterLogSchema::new(versioned_state_view.id(), idx);
+                                    let res = thread_vm.execute_single_txn(&versioned_state_view, txn, &log_context);
                                     match res {
                                         Ok((vm_status, output, sender)) => {
                                             if !output.status().is_discarded() {
@@ -1067,6 +1048,7 @@ impl DiemVM {
                             }
                         }
                     }
+                    println!("   - Exec thread: wait {} proceed {}", wait_num, proceed_num);
                 });
             }
 
@@ -1089,8 +1071,8 @@ impl DiemVM {
 
         use std::thread;
 
+        // Dropping large structures is expensive -- do this is a separate thread.
         thread::spawn(move || {
-            // Dropping large structures is expensive -- do this is a separate thread.
             drop(signature_verified_block); // Explicit drops to measure their cost.
             drop(data);
         });

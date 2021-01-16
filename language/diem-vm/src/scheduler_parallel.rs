@@ -8,6 +8,19 @@ use diem_types::{
         TransactionOutput,
     },
     vm_status::{VMStatus, },
+    vm_status::StatusCode,
+};
+
+use crate::{
+    counters::*, create_access_path, };
+
+use move_vm_runtime::{
+    data_cache::{RemoteCache, RefBytes}
+};
+use vm::errors::*;
+use move_core_types::{
+    account_address::AccountAddress,
+    language_storage::{ModuleId, StructTag},
 };
 
 use rayon::prelude::*;
@@ -191,7 +204,7 @@ impl WritesPlaceholder {
         &self,
         key: &AccessPath,
         version: usize,
-    ) -> Result<Option<Vec<u8>>, Option<usize>> {
+    ) -> Result<&Option<Vec<u8>>, Option<usize>> {
 
         // Get the smaller key
         let tree = self
@@ -219,7 +232,7 @@ impl WritesPlaceholder {
                 // The entry is populated so return its contents
                 if flag == FLAG_DONE {
                     let data_read_ref = unsafe { &*entry_val.data.get() };
-                    return Ok(data_read_ref.clone())
+                    return Ok(data_read_ref)
                 }
 
                 unreachable!();
@@ -352,6 +365,37 @@ impl<'view> VersionedStateView<'view>{
         return false;
 
     }
+
+    fn get_ref(&self, access_path: &AccessPath) -> anyhow::Result<Option<RefBytes>> {
+        // println!("V{} {}", self.version, access_path);
+
+
+        let mut loop_iterations = 0;
+        loop {
+
+            let read = self.placeholder.read(access_path, self.version);
+
+            // Go to the Database
+            if let Err(None) = read{
+                return self.base_view.get(access_path).map(|v| v.map( |v1| RefBytes::Bytes(v1) ));
+            }
+
+            // Read is a success
+            if let Ok(data) = read {
+                return Ok(data.as_ref().map(|v| RefBytes::Ref(v) ));
+            }
+
+            loop_iterations+= 1;
+            if loop_iterations < 500 {
+                ::std::sync::atomic::spin_loop_hint();
+            }
+            else
+            {
+                thread::sleep(ONE_MILLISEC);
+            }
+        }
+    }
+
 }
 
 impl<'block> StateView for VersionedStateView<'block> {
@@ -372,7 +416,7 @@ impl<'block> StateView for VersionedStateView<'block> {
 
             // Read is a success
             if let Ok(data) = read {
-                return Ok(data);
+                return Ok(data.clone());
             }
 
             loop_iterations+= 1;
@@ -384,8 +428,6 @@ impl<'block> StateView for VersionedStateView<'block> {
                 thread::sleep(ONE_MILLISEC);
             }
         }
-
-
     }
 
     fn multi_get(&self, _access_paths: &[AccessPath]) -> anyhow::Result<Vec<Option<Vec<u8>>>> {
@@ -400,6 +442,34 @@ impl<'block> StateView for VersionedStateView<'block> {
         self.base_view.id()
     }
 }
+
+impl<'view> RemoteCache for VersionedStateView<'view> {
+    fn get_module(&self, module_id: &ModuleId) -> VMResult<Option<Vec<u8>>> {
+        // REVIEW: cache this?
+        let ap = AccessPath::from(module_id);
+        self.get(&ap).map_err(|_| PartialVMError::new(StatusCode::STORAGE_ERROR).finish(Location::Undefined))
+    }
+
+    fn get_resource(
+        &self,
+        address: &AccountAddress,
+        struct_tag: &StructTag,
+    ) -> PartialVMResult<Option<Vec<u8>>> {
+        let ap = create_access_path(*address, struct_tag.clone());
+        self.get(&ap).map_err(|_| PartialVMError::new(StatusCode::STORAGE_ERROR))
+    }
+
+    fn get_resource_ref(
+        &self,
+        address: &AccountAddress,
+        struct_tag: &StructTag,
+    ) -> PartialVMResult<Option<RefBytes>>{
+        let ap = create_access_path(*address, struct_tag.clone());
+        self.get_ref(&ap).map_err(|_| PartialVMError::new(StatusCode::STORAGE_ERROR))
+    }
+}
+
+
 
 use std::collections::HashMap;
 use std::cell::RefCell;
