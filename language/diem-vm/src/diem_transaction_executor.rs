@@ -899,8 +899,9 @@ impl DiemVM {
 
         let path_version_tuples : Vec<(AccessPath, usize)> = path_version_tuples.into_iter().flatten().collect();
 
-        fn split_merge(num: usize, split: Vec<(AccessPath, usize)>) -> HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>> {
-            if !(num < 8) || split.len() < 1000 {
+        fn split_merge(num_cpus : usize, num: usize, split: Vec<(AccessPath, usize)>) -> HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>> {
+            println!("Split Size {} --level:{}", split.len(), num);
+            if ((2 << num) > num_cpus) || split.len() < 1000 {
                 let mut data = HashMap::new();
                 for (path, version) in split.into_iter() {
                     data.entry(path).or_insert(BTreeMap::new()).insert(version, WriteVersionValue::new());
@@ -909,10 +910,10 @@ impl DiemVM {
             }
             else {
                 let pivot_address = split[split.len()/2].0.clone();
-                let (left, right): (Vec<_>, Vec<_>) = split.into_par_iter().partition(|(p,v)| *p < pivot_address);
+                let (left, right): (Vec<_>, Vec<_>) = split.into_iter().partition(|(p,v)| *p < pivot_address);
                 let (mut left_map, right_map) = rayon::join(
-                    || split_merge(num + 1, left),
-                    || split_merge(num + 1, right),
+                    || split_merge(num_cpus, num + 1, left),
+                    || split_merge(num_cpus, num + 1, right),
                 );
                 left_map.extend(right_map);
                 left_map
@@ -920,7 +921,7 @@ impl DiemVM {
         }
 
         // use std::cell::UnsafeCell;
-        let data = split_merge(0, path_version_tuples);
+        let data = split_merge(cpus, 0, path_version_tuples);
         let placeholders = WritesPlaceholder::new_from(
             data,
             num_txns
