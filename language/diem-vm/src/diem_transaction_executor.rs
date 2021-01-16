@@ -47,7 +47,7 @@ use std::{
 };
 
 use std::cmp::max;
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -800,7 +800,8 @@ impl DiemVM {
             WritesStructCreator,
             WritesPlaceholder,
             VersionedStateView,
-            SingleThreadReadCache
+            SingleThreadReadCache,
+            WriteVersionValue
         };
         use num_cpus;
 
@@ -854,12 +855,13 @@ impl DiemVM {
 
         // Analyse each user script for its write-set and create the placeholder structure
         // that allows for parallel execution.
-        let mut placeholder_struct = signature_verified_block
+        let path_version_tuples : Vec<Vec<(AccessPath, usize)>> = signature_verified_block
                 .par_iter()
                 .enumerate()
                 .with_min_len(chunks)
-                .fold( || WritesStructCreator::new(),
-            |mut placeholder : WritesStructCreator, (idx, txn)| {
+                .fold(
+                || Vec::new(),
+                |mut acc, (idx, txn)| {
             if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
                 match user_txn.payload() {
                     TransactionPayload::Script(script) => {
@@ -872,20 +874,45 @@ impl DiemVM {
                             }
                         }
 
-                        placeholder.inc_result();
+                        // placeholder.inc_result();
                         // Create the dependency structure
                         let deps = read_write_infer.get(script.code()).unwrap();
-                        for w in deps.writes(&params) {
-                            // Update the placeholder structure
-                            placeholder.add_placeholder(w, idx);
-                        }
-
+                        acc.extend(deps.writes(&params).map(
+                            |w| (w, idx)
+                        ));
                     }
                     _ => { unreachable!() }
                 }
             } else { unreachable!() }
-            placeholder
-        }).reduce(
+        acc
+        }).collect();
+
+        let execute_time = std::time::Instant::now().duration_since(execute_start);
+
+        println!(
+            "Schedule Parallel. Execute time: {} ms. TPS: {}.",
+            execute_time.as_millis(),
+            num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
+        );
+        exec_tally += execute_time.as_millis();
+
+        let execute_start = std::time::Instant::now();
+
+        let mut data = HashMap::new();
+        for smaller_vec in path_version_tuples.into_iter() {
+            for (path, version) in smaller_vec {
+                data.entry(path).or_insert(BTreeMap::new()).insert(version, WriteVersionValue::new());
+            }
+        }
+
+        use std::cell::UnsafeCell;
+        let placeholders = WritesPlaceholder::new_from(
+            data,
+            num_txns
+        );
+
+        /*
+        let mut placeholder_struct = placeholder_struct.reduce(
             || WritesStructCreator::new(),
             |mut placeholder0, placeholder1| {
                 // println!("Merge {} {}", placeholder0.len(), placeholder1.len());
@@ -895,11 +922,12 @@ impl DiemVM {
         );
 
         let placeholders = placeholder_struct.freeze();
+        */
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
 
         println!(
-            "Schedule. Execute time: {} ms. TPS: {}.",
+            "Schedule Reduce. Execute time: {} ms. TPS: {}.",
             execute_time.as_millis(),
             num_txns as u128 * 1_000_000_000 / execute_time.as_nanos(),
         );

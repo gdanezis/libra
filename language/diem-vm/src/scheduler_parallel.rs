@@ -108,6 +108,16 @@ impl WritesPlaceholder {
         }
     }
 
+    pub fn new_from(data:HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>, len : usize) -> WritesPlaceholder {
+        WritesPlaceholder {
+            data,
+            results : (0..len).map(|_| UnsafeCell::new(None)).collect(),
+
+            success_num : AtomicUsize::new(0),
+            failure_num : AtomicUsize::new(0),
+        }
+    }
+
     pub fn set_result(&self, idx:usize, res: (VMStatus, TransactionOutput), success : bool) {
         // Only one thread can write at the time, so just set it.
         let entry = &self.results[idx];
