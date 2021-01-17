@@ -1291,34 +1291,12 @@ impl ScriptReadWriteSet {
     // TODO: return a result in case the params are not long enough.
     pub fn reads<'a>(&'a self, params: &'a Vec<AccountAddress>) -> ScriptReadWriteSetVarIter {
         return ScriptReadWriteSetVarIter::new(&self.reads, params);
-        /*
-        self.reads.iter().cloned().map(|(v, mut p)| {
-            match v {
-                ScriptReadWriteSetVar::Const => p,
-                ScriptReadWriteSetVar::Param(i) => {
-                    p.address = params[i];
-                    p
-                },
-            }
-        } ).collect()
-        */
     }
 
     // Return the write access paths specialized for these parameters
     // TODO: return a result in case the params are not long enough.
     pub fn writes<'a>(&'a self, params: &'a Vec<AccountAddress>) -> ScriptReadWriteSetVarIter<'a> {
         return ScriptReadWriteSetVarIter::new(&self.writes, params);
-        /*
-        self.writes.iter().cloned().map(|(v, mut p)| {
-            match v {
-                ScriptReadWriteSetVar::Const => p,
-                ScriptReadWriteSetVar::Param(i) => {
-                    p.address = params[i];
-                    p
-                },
-            }
-        } ).collect()
-        */
     }
 }
 

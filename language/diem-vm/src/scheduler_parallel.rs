@@ -259,11 +259,13 @@ const FLAG_UNASSIGNED: usize = 0;
 const FLAG_DONE: usize = 2;
 const FLAG_SKIP: usize = 3;
 
+#[cfg_attr(
+    any(target_arch = "x86_64"),
+    repr(align(128))
+)]
 pub(crate) struct WriteVersionValue {
     flag: AtomicUsize,
     data: UnsafeCell<Option<Vec<u8>>>,
-    _pad: [u8; 128], // Keep the flags on separate cache lines
-                     // See Intel x64 multicore perf manual (Section 8).
 }
 
 impl WriteVersionValue {
@@ -271,7 +273,6 @@ impl WriteVersionValue {
         WriteVersionValue {
             flag: AtomicUsize::new(FLAG_UNASSIGNED),
             data: UnsafeCell::new(None),
-            _pad: [0; 128],
         }
     }
 }
