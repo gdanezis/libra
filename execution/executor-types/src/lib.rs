@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::max, collections::HashMap, sync::Arc};
 use storage_interface::TreeState;
 
-pub trait ChunkExecutor: Send {
+pub trait ChunkExecutor { // }: Send {
     /// Verifies the transactions based on the provided proofs and ledger info. If the transactions
     /// are valid, executes them and commits immediately if execution results match the proofs.
     /// Returns a vector of reconfiguration events in the chunk
@@ -41,7 +41,7 @@ pub trait ChunkExecutor: Send {
     ) -> Result<Vec<ContractEvent>>;
 }
 
-pub trait BlockExecutor: Send {
+pub trait BlockExecutor { // }: Send {
     /// Get the latest committed block id
     fn committed_block_id(&mut self) -> Result<HashValue, Error>;
 
@@ -75,7 +75,7 @@ pub trait BlockExecutor: Send {
     ) -> Result<(Vec<Transaction>, Vec<ContractEvent>), Error>;
 }
 
-pub trait TransactionReplayer: Send {
+pub trait TransactionReplayer { // }: Send {
     fn replay_chunk(
         &mut self,
         first_version: Version,

@@ -445,8 +445,8 @@ pub(crate) struct Loader {
     function_read_cache : UnsafeCell<Vec<Arc<Function>>>,
 }
 
-unsafe impl Send for Loader {}
-unsafe impl Sync for Loader {}
+// unsafe impl Send for Loader {}
+// unsafe impl Sync for Loader {}
 
 const BUSY_FLAG : usize = usize::MAX;
 
