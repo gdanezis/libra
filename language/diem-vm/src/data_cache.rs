@@ -91,6 +91,17 @@ impl<'a> StateViewCache<'a> {
             }
         }
     }
+
+
+    // Publishes a `WriteSet` computed at the end of a transaction.
+    // The effect is to build a layer in front of the `StateView` which keeps
+    // track of the data as if the changes were applied immediately.
+    pub(crate) fn push_changes(&mut self, changes : Vec<(AccessPath, Option<Vec<u8>>)>) {
+        for (k, v) in changes {
+            self.data_map.insert(k, v);
+        }
+    }
+
 }
 
 impl<'block> StateView for StateViewCache<'block> {

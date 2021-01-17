@@ -125,6 +125,15 @@ impl WritesPlaceholder {
             }), data)
     }
 
+    pub fn get_change_set(&self) -> Vec<(AccessPath, Option<Vec<u8>>)> {
+        let mut change_set = Vec::with_capacity(self.data.len());
+        for (k,_) in self.data.iter() {
+            let val = self.read(k, usize::MAX).unwrap();
+            change_set.push((k.clone(), val.clone()));
+        }
+        change_set
+    }
+
     pub fn len(&self) -> usize {
         self.data.len()
     }

@@ -854,7 +854,7 @@ impl DiemVM {
 
         // Analyse each user script for its write-set and create the placeholder structure
         // that allows for parallel execution.
-        let path_version_tuples : Vec<Vec<(AccessPath, usize)>> = signature_verified_block
+        let path_version_tuples : Vec<(AccessPath, usize)> = signature_verified_block
                 .par_iter()
                 .enumerate()
                 .with_min_len(chunks)
@@ -883,7 +883,7 @@ impl DiemVM {
                 }
             } else { unreachable!() }
         acc
-        }).collect();
+        }).flatten().collect();
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
 
@@ -896,7 +896,7 @@ impl DiemVM {
 
         let execute_start = std::time::Instant::now();
 
-        let path_version_tuples : Vec<(AccessPath, usize)> = path_version_tuples.into_iter().flatten().collect();
+        // let path_version_tuples : Vec<(AccessPath, usize)> = path_version_tuples.into_iter().flatten().collect();
         fn split_merge(num_cpus : usize, num: usize, split: Vec<(AccessPath, usize)>) -> HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>> {
             if ((2 << num) > num_cpus) || split.len() < 1000 {
                 let mut data = HashMap::new();
@@ -939,6 +939,7 @@ impl DiemVM {
         // The advanced scheduler
         let execute_start = std::time::Instant::now();
         let curent_idx = AtomicUsize::new(0);
+        let stop_when = signature_verified_block.len();
 
         use std::collections::VecDeque;
 
@@ -962,7 +963,7 @@ impl DiemVM {
                         if tx_idx_ring_buffer.len() < 10 { // How many transactions to have in the buffer.
 
                             let idx = curent_idx.fetch_add(1, Ordering::Relaxed);
-                            if (idx < signature_verified_block.len()) {
+                            if (idx < stop_when) {
                                 let txn = &signature_verified_block[idx];
 
                                 let (params, deps) = if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
@@ -1069,6 +1070,8 @@ impl DiemVM {
         let (num_success, num_fail) = placeholders.get_stats();
         println!("Block: {} success, {} failures", num_success, num_fail);
 
+        let change_set = placeholders.get_change_set();
+        data_cache.push_changes(change_set);
         let (all_results, data) = placeholders.get_all_results();
 
         use std::thread;
