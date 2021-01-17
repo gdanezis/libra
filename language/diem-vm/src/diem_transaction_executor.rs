@@ -46,7 +46,7 @@ use std::{
     convert::{AsMut, AsRef},
 };
 
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::collections::{HashMap, BTreeMap};
 use std::sync::Arc;
 
@@ -947,9 +947,11 @@ impl DiemVM {
         use std::collections::VecDeque;
 
         scope(|s| {
+            // How many threads to use?
+            let compute_cpus = min( num_txns / 250, cpus);
 
-            println!("Launching {} threads to execute ...", cpus-1);
-            for _ in 0..(cpus-1) {
+            println!("Launching {} threads to execute ...", compute_cpus-1);
+            for _ in 0..(compute_cpus-1) {
                 s.spawn( |_| {
                     // Make a per thread cache to de-congest mem bus
                     let thread_data_cache = SingleThreadReadCache::new(data_cache);
