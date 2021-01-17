@@ -46,7 +46,7 @@ use std::{
     convert::{AsMut, AsRef},
 };
 
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::collections::{HashMap, BTreeMap};
 use std::sync::Arc;
 
@@ -804,15 +804,11 @@ impl DiemVM {
             OutcomeArray
         };
         use num_cpus;
-        use rayon::scope;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::collections::VecDeque;
-
 
         // Count and print the number of transactions.
         let num_txns = transactions.len();
         let cpus = num_cpus::get();
-        let chunks = max(2000, num_txns / cpus);
+        let chunks = max(1, num_txns / cpus);
         let mut should_restart = false;
         println!("Executing block, transaction count: {}", num_txns);
 
@@ -859,13 +855,13 @@ impl DiemVM {
 
         // Analyse each user script for its write-set and create the placeholder structure
         // that allows for parallel execution.
-        let mut path_version_tuples : VecDeque<(usize, WritesPlaceholder)> = signature_verified_block
+        let path_version_tuples : Vec<(AccessPath, usize)> = signature_verified_block
                 .par_iter()
                 .enumerate()
                 .with_min_len(chunks)
                 .fold(
-                || (0_usize, WritesPlaceholder::new()),
-                |(cnt, mut acc), (idx, txn)| {
+                || Vec::new(),
+                |mut acc, (idx, txn)| {
             if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
                 match user_txn.payload() {
                     TransactionPayload::Script(script) => {
@@ -880,17 +876,15 @@ impl DiemVM {
 
                         // Create the dependency structure
                         let deps = read_write_infer.get(script.code()).unwrap();
-                        deps.writes(&params).for_each(
-                            |w| {
-                                acc.data.entry(w).or_insert(BTreeMap::new()).insert(idx, WriteVersionValue::new());
-                            }
-                        );
+                        acc.extend(deps.writes(&params).map(
+                            |w| (w, idx)
+                        ));
                     }
                     _ => { unreachable!() }
                 }
             } else { unreachable!() }
-        (cnt+1, acc)
-        }).collect();
+        acc
+        }).flatten().collect();
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
 
@@ -903,7 +897,6 @@ impl DiemVM {
 
         let execute_start = std::time::Instant::now();
 
-        /*
         // let path_version_tuples : Vec<(AccessPath, usize)> = path_version_tuples.into_iter().flatten().collect();
         fn split_merge(num_cpus : usize, num: usize, split: Vec<(AccessPath, usize)>) -> HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>> {
             if ((2 << num) > num_cpus) || split.len() < 1000 {
@@ -927,23 +920,11 @@ impl DiemVM {
 
         // use std::cell::UnsafeCell;
         let data = split_merge(cpus, 0, path_version_tuples);
-
-
-
-
-
-        let (cnt, raw_data) = path_version_tuples.pop_front();
-        let mut data = HashMap::new();
-        for (path, version) in raw_data.into_iter() {
-            data.entry(path).or_insert(BTreeMap::new()).insert(version, WriteVersionValue::new());
-        }
+        let outcomes = OutcomeArray::new(num_txns);
 
         let placeholders = WritesPlaceholder::new_from(
             data,
         );
-        */
-        let outcomes = OutcomeArray::new(num_txns);
-
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
 
@@ -954,148 +935,129 @@ impl DiemVM {
         );
         exec_tally += execute_time.as_millis();
 
+        use rayon::scope;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         // The advanced scheduler
         let execute_start = std::time::Instant::now();
         let curent_idx = AtomicUsize::new(0);
-        let mut stop_when = 0; // signature_verified_block.len();
+        let stop_when = signature_verified_block.len();
 
-        loop {
+        use std::collections::VecDeque;
 
-            let (cnt, placeholders) = path_version_tuples.pop_front().unwrap();
+        scope(|s| {
 
-            curent_idx.store(stop_when, Ordering::Release);
-            stop_when += cnt;
+            println!("Launching {} threads to execute ...", cpus-1);
+            for _ in 0..(cpus-1) {
+                s.spawn( |_| {
+                    // Make a per thread cache to de-congest mem bus
+                    let thread_data_cache = SingleThreadReadCache::new(data_cache);
+                    // Make a new VM per thread -- with its own module cache
+                    let thread_vm = DiemVM::new(&thread_data_cache);
 
+                    let mut tx_idx_ring_buffer = VecDeque::with_capacity(10);
 
-            scope(|s| {
+                    let mut wait_num = 0_usize;
+                    let mut proceed_num = 0_usize;
 
-                // println!("Launching {} threads to execute ...", cpus-1);
-                for _ in 0..(cpus-1) {
-                    s.spawn( |_| {
-                        // Make a per thread cache to de-congest mem bus
-                        let thread_data_cache = SingleThreadReadCache::new(data_cache);
-                        // Make a new VM per thread -- with its own module cache
-                        let thread_vm = DiemVM::new(&thread_data_cache);
+                    loop {
 
-                        let mut tx_idx_ring_buffer = VecDeque::with_capacity(10);
+                        if tx_idx_ring_buffer.len() < 10 { // How many transactions to have in the buffer.
 
-                        let mut wait_num = 0_usize;
-                        let mut proceed_num = 0_usize;
+                            let idx = curent_idx.fetch_add(1, Ordering::Relaxed);
+                            if (idx < stop_when) {
+                                let txn = &signature_verified_block[idx];
 
-                        loop {
+                                let (params, deps) = if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
+                                    match user_txn.payload() {
+                                        TransactionPayload::Script(script) => {
 
-                            if tx_idx_ring_buffer.len() < 10 { // How many transactions to have in the buffer.
-
-                                let idx = curent_idx.fetch_add(1, Ordering::Relaxed);
-                                if (idx < stop_when) {
-                                    let txn = &signature_verified_block[idx];
-
-                                    let (params, deps) = if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
-                                        match user_txn.payload() {
-                                            TransactionPayload::Script(script) => {
-
-                                                let mut params = Vec::with_capacity(5);
-                                                params.push(user_txn.sender());
-                                                for arg in script.args() {
-                                                    if let TransactionArgument::Address(address) = arg {
-                                                        params.push(address.clone());
-                                                    }
+                                            let mut params = Vec::with_capacity(5);
+                                            params.push(user_txn.sender());
+                                            for arg in script.args() {
+                                                if let TransactionArgument::Address(address) = arg {
+                                                    params.push(address.clone());
                                                 }
+                                            }
 
-                                                // Create the dependency structure
-                                                let deps = read_write_infer.get(script.code()).unwrap();
-                                                (params, deps)
-                                            },
-                                            _ => { unreachable!(); }
-                                        }
+                                            // Create the dependency structure
+                                            let deps = read_write_infer.get(script.code()).unwrap();
+                                            (params, deps)
+                                        },
+                                        _ => { unreachable!(); }
                                     }
-                                    else { unreachable!(); };
-
-                                    tx_idx_ring_buffer.push_back( (idx, txn, params, deps) );
                                 }
+                                else { unreachable!(); };
+
+                                tx_idx_ring_buffer.push_back( (idx, txn, params, deps) );
                             }
-
-                            if tx_idx_ring_buffer.len() == 0 {
-                                break
-                            }
-
-                            let (idx, txn, params, deps) = tx_idx_ring_buffer.pop_front().unwrap(); // safe due to previous check
-
-                                let versioned_state_view = VersionedStateView::new(idx, &thread_data_cache, &placeholders);
-
-                                // Delay and move to next tx if cannot execure now.
-                                if deps.reads(&params).any(|k| versioned_state_view.will_read_block(&k) ) {
-                                    // println!("Delay {}", idx);
-                                    tx_idx_ring_buffer.push_back( (idx, txn, params, deps) );
-                                    wait_num += 1;
-
-                                    // This causes a PAUSE on an x64 arch, and takes 140 cycles. Allows other
-                                    // core to take resources and better HT.
-                                    ::std::sync::atomic::spin_loop_hint();
-                                    continue
-                                }
-                                proceed_num += 1;
-
-                                // Execute the transaction
-                                let log_context = AdapterLogSchema::new(versioned_state_view.id(), idx);
-                                let res = thread_vm.execute_single_txn(&versioned_state_view, txn, &log_context);
-                                match res {
-                                    Ok((vm_status, output, sender)) => {
-                                        if !output.status().is_discarded() {
-
-                                            for (k,v) in output.write_set() {
-                                                let val = match v {
-                                                    WriteOp::Deletion => None,
-                                                    WriteOp::Value(data) => Some(data.clone()),
-                                                };
-
-                                                placeholders.write(k, idx, val).unwrap();
-                                            }
-
-                                            for w in deps.writes(&params) {
-                                                placeholders.skip_if_not_set(&w, idx).unwrap();
-                                            }
-
-                                            // Commit the results to the data cache
-                                            outcomes.set_result(idx, (vm_status, output), true);
-                                        } else {
-
-                                            for w in deps.writes(&params) {
-                                                placeholders.skip(&w, idx).unwrap();
-                                            }
-
-                                            outcomes.set_result(idx, (vm_status, output), false);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        panic!("TODO STOP VM & RETURN ERROR");
-                                        // return Err(e);
-                                    }
-                                }
-
-
                         }
-                        // println!("   - Exec thread: wait {} proceed {}", wait_num, proceed_num);
-                    });
-                }
 
-            });
+                        if tx_idx_ring_buffer.len() == 0 {
+                            break
+                        }
 
-            let change_set = placeholders.get_change_set();
-            data_cache.push_changes(change_set);
+                        let (idx, txn, params, deps) = tx_idx_ring_buffer.pop_front().unwrap(); // safe due to previous check
 
-            // Dropping large structures is expensive -- do this is a separate thread.
-            thread::spawn(move || {
-                // drop(signature_verified_block); // Explicit drops to measure their cost.
-                drop(placeholders);
-            });
+                            let versioned_state_view = VersionedStateView::new(idx, &thread_data_cache, &placeholders);
 
-            if path_version_tuples.len() == 0 {
-                break
+                            // Delay and move to next tx if cannot execure now.
+                            if deps.reads(&params).any(|k| versioned_state_view.will_read_block(&k) ) {
+                                // println!("Delay {}", idx);
+                                tx_idx_ring_buffer.push_back( (idx, txn, params, deps) );
+                                wait_num += 1;
+
+                                // This causes a PAUSE on an x64 arch, and takes 140 cycles. Allows other
+                                // core to take resources and better HT.
+                                ::std::sync::atomic::spin_loop_hint();
+                                continue
+                            }
+                            proceed_num += 1;
+
+                            // Execute the transaction
+                            let log_context = AdapterLogSchema::new(versioned_state_view.id(), idx);
+                            let res = thread_vm.execute_single_txn(&versioned_state_view, txn, &log_context);
+                            match res {
+                                Ok((vm_status, output, sender)) => {
+                                    if !output.status().is_discarded() {
+
+                                        for (k,v) in output.write_set() {
+                                            let val = match v {
+                                                WriteOp::Deletion => None,
+                                                WriteOp::Value(data) => Some(data.clone()),
+                                            };
+
+                                            placeholders.write(k, idx, val).unwrap();
+                                        }
+
+                                        for w in deps.writes(&params) {
+                                            placeholders.skip_if_not_set(&w, idx).unwrap();
+                                        }
+
+                                        // Commit the results to the data cache
+                                        outcomes.set_result(idx, (vm_status, output), true);
+                                    } else {
+
+                                        for w in deps.writes(&params) {
+                                            placeholders.skip(&w, idx).unwrap();
+                                        }
+
+                                        outcomes.set_result(idx, (vm_status, output), false);
+                                    }
+                                }
+                                Err(e) => {
+                                    panic!("TODO STOP VM & RETURN ERROR");
+                                    // return Err(e);
+                                }
+                            }
+
+
+                    }
+                    println!("   - Exec thread: wait {} proceed {}", wait_num, proceed_num);
+                });
             }
 
-        }
+        });
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
 
@@ -1110,7 +1072,8 @@ impl DiemVM {
         let (num_success, num_fail) = outcomes.get_stats();
         println!("Block: {} success, {} failures", num_success, num_fail);
 
-
+        let change_set = placeholders.get_change_set();
+        data_cache.push_changes(change_set);
         let all_results = outcomes.get_all_results();
 
         use std::thread;
@@ -1118,7 +1081,7 @@ impl DiemVM {
         // Dropping large structures is expensive -- do this is a separate thread.
         thread::spawn(move || {
             drop(signature_verified_block); // Explicit drops to measure their cost.
-            // drop(placeholders);
+            drop(placeholders);
         });
 
 
