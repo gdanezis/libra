@@ -30,54 +30,19 @@ use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-unsafe impl Send for WritesPlaceholder {}
-unsafe impl Sync for WritesPlaceholder {}
+unsafe impl Send for OutcomeArray {}
+unsafe impl Sync for OutcomeArray {}
 
-/// A structure that holds placeholders for each write to the database
-//
-//  The structure is created by one thread creating the scheduling, and
-//  at that point it is used as a &mut by that single thread.
-//
-//  Then it is passed to all threads executing as a shared reference. At
-//  this point only a single thread must write to any entry, and others
-//  can read from it. Only entries are mutated using interior mutability,
-//  but no entries can be added or deleted.
-//
-pub(crate) struct WritesPlaceholder {
-    data: HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>,
+pub struct OutcomeArray {
     results : Vec<UnsafeCell<(VMStatus, TransactionOutput)>>,
 
     success_num : AtomicUsize,
     failure_num : AtomicUsize,
 }
 
-
-use diem_types::{
-    transaction::{
-        TransactionStatus,
-    },
-    write_set::{WriteSet, },
-};
-
-impl WritesPlaceholder {
-    pub fn new(len : usize) -> WritesPlaceholder {
-        WritesPlaceholder {
-            data: HashMap::new(),
-            results : (0..len).map(|_| UnsafeCell::new((VMStatus::Executed, TransactionOutput::new(
-                WriteSet::default(),
-                vec![],
-                0,
-                TransactionStatus::Retry,
-            )))).collect(),
-
-            success_num : AtomicUsize::new(0),
-            failure_num : AtomicUsize::new(0),
-        }
-    }
-
-    pub fn new_from(data:HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>, len : usize) -> WritesPlaceholder {
-        WritesPlaceholder {
-            data,
+impl OutcomeArray {
+    pub fn new(len : usize) -> OutcomeArray {
+        OutcomeArray {
             results : (0..len).map(|_| UnsafeCell::new((VMStatus::Executed, TransactionOutput::new(
                 WriteSet::default(),
                 vec![],
@@ -115,14 +80,55 @@ impl WritesPlaceholder {
         return (self.success_num.load(Ordering::Relaxed), self.failure_num.load(Ordering::Relaxed))
     }
 
-    pub fn get_all_results(self) -> (Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>, HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>){
+    pub fn get_all_results(self) -> (Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>){
 
-        let (results, data) = (self.results, self.data);
-        (Ok(
+        let results = self.results;
+        Ok(
             unsafe {
                 // This is safe since UnsafeCell has no runtime representation.
                 std::mem::transmute::<Vec<UnsafeCell<(VMStatus, TransactionOutput)>>, Vec<(VMStatus, TransactionOutput)>>(results)
-            }), data)
+            })
+    }
+
+}
+
+
+unsafe impl Send for WritesPlaceholder {}
+unsafe impl Sync for WritesPlaceholder {}
+
+/// A structure that holds placeholders for each write to the database
+//
+//  The structure is created by one thread creating the scheduling, and
+//  at that point it is used as a &mut by that single thread.
+//
+//  Then it is passed to all threads executing as a shared reference. At
+//  this point only a single thread must write to any entry, and others
+//  can read from it. Only entries are mutated using interior mutability,
+//  but no entries can be added or deleted.
+//
+pub(crate) struct WritesPlaceholder {
+    data: HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>,
+}
+
+
+use diem_types::{
+    transaction::{
+        TransactionStatus,
+    },
+    write_set::{WriteSet, },
+};
+
+impl WritesPlaceholder {
+    pub fn new(len : usize) -> WritesPlaceholder {
+        WritesPlaceholder {
+            data: HashMap::new(),
+        }
+    }
+
+    pub fn new_from(data:HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>) -> WritesPlaceholder {
+        WritesPlaceholder {
+            data,
+        }
     }
 
     pub fn get_change_set(&self) -> Vec<(AccessPath, Option<Vec<u8>>)> {

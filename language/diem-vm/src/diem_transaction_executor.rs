@@ -800,7 +800,8 @@ impl DiemVM {
             WritesPlaceholder,
             VersionedStateView,
             SingleThreadReadCache,
-            WriteVersionValue
+            WriteVersionValue,
+            OutcomeArray
         };
         use num_cpus;
 
@@ -919,9 +920,10 @@ impl DiemVM {
 
         // use std::cell::UnsafeCell;
         let data = split_merge(cpus, 0, path_version_tuples);
+        let outcomes = OutcomeArray::new(num_txns);
+
         let placeholders = WritesPlaceholder::new_from(
             data,
-            num_txns
         );
 
         let execute_time = std::time::Instant::now().duration_since(execute_start);
@@ -1033,14 +1035,14 @@ impl DiemVM {
                                         }
 
                                         // Commit the results to the data cache
-                                        placeholders.set_result(idx, (vm_status, output), true);
+                                        outcomes.set_result(idx, (vm_status, output), true);
                                     } else {
 
                                         for w in deps.writes(&params) {
                                             placeholders.skip(&w, idx).unwrap();
                                         }
 
-                                        placeholders.set_result(idx, (vm_status, output), false);
+                                        outcomes.set_result(idx, (vm_status, output), false);
                                     }
                                 }
                                 Err(e) => {
@@ -1067,19 +1069,19 @@ impl DiemVM {
         exec_tally += execute_time.as_millis();
         //
         let execute_start = std::time::Instant::now();
-        let (num_success, num_fail) = placeholders.get_stats();
+        let (num_success, num_fail) = outcomes.get_stats();
         println!("Block: {} success, {} failures", num_success, num_fail);
 
         let change_set = placeholders.get_change_set();
         data_cache.push_changes(change_set);
-        let (all_results, data) = placeholders.get_all_results();
+        let all_results = outcomes.get_all_results();
 
         use std::thread;
 
         // Dropping large structures is expensive -- do this is a separate thread.
         thread::spawn(move || {
             drop(signature_verified_block); // Explicit drops to measure their cost.
-            drop(data);
+            drop(placeholders);
         });
 
 
