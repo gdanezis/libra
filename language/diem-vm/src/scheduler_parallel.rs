@@ -24,13 +24,11 @@ use move_core_types::{
 };
 
 use rayon::prelude::*;
-use twox_hash::RandomXxHashBuilder64;
 
 
 use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
 
 unsafe impl Send for WritesPlaceholder {}
 unsafe impl Sync for WritesPlaceholder {}
@@ -46,71 +44,11 @@ unsafe impl Sync for WritesPlaceholder {}
 //  but no entries can be added or deleted.
 //
 pub(crate) struct WritesPlaceholder {
-    data: HashMap<AccessPathKey, BTreeMap<usize, WriteVersionValue>>,
+    data: HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>,
     results : Vec<UnsafeCell<(VMStatus, TransactionOutput)>>,
 
     success_num : AtomicUsize,
     failure_num : AtomicUsize,
-}
-
-// The AccessPathKey type resides on the stack and requires no allocations,
-// as we should probably in the furure make the AccessPath behave.
-#[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub struct AccessPathKey {
-    address : AccountAddress,
-    short_path : [u8; 128],
-}
-
-impl AccessPathKey {
-    pub fn from_address_path(address: &AccountAddress, path: &Vec<u8>) -> AccessPathKey {
-        let address :AccountAddress = address.clone();
-        if path.len() > 128 {
-            unimplemented!(); // In the future hash long paths.
-        }
-        let mut short_path : [u8; 128] = [0; 128];
-        let mut_short_path = &mut short_path[..path.len()];
-        mut_short_path.copy_from_slice(&path[..]);
-        AccessPathKey {
-            address,
-            short_path,
-        }
-
-    }
-
-}
-
-impl From<AccessPath> for AccessPathKey {
-    fn from(access_path: AccessPath) -> Self {
-        let (address, path) = access_path.into_address_path();
-        if path.len() > 128 {
-            unimplemented!(); // In the future hash long paths.
-        }
-        let mut short_path : [u8; 128] = [0; 128];
-        let mut_short_path = &mut short_path[..path.len()];
-        mut_short_path.copy_from_slice(&path[..]);
-        AccessPathKey {
-            address,
-            short_path,
-        }
-    }
-}
-
-impl From<&AccessPath> for AccessPathKey {
-    fn from(access_path: &AccessPath) -> Self {
-        let path = access_path.borrow_path();
-
-        let address :AccountAddress = access_path.address.clone();
-        if path.len() > 128 {
-            unimplemented!(); // In the future hash long paths.
-        }
-        let mut short_path : [u8; 128] = [0; 128];
-        let mut_short_path = &mut short_path[..path.len()];
-        mut_short_path.copy_from_slice(&path[..]);
-        AccessPathKey {
-            address,
-            short_path,
-        }
-    }
 }
 
 
@@ -124,7 +62,7 @@ use diem_types::{
 impl WritesPlaceholder {
     pub fn new(len : usize) -> WritesPlaceholder {
         WritesPlaceholder {
-            data: HashMap::default(),
+            data: HashMap::new(),
             results : (0..len).map(|_| UnsafeCell::new((VMStatus::Executed, TransactionOutput::new(
                 WriteSet::default(),
                 vec![],
@@ -137,7 +75,7 @@ impl WritesPlaceholder {
         }
     }
 
-    pub fn new_from(data:HashMap<AccessPathKey, BTreeMap<usize, WriteVersionValue>>, len : usize) -> WritesPlaceholder {
+    pub fn new_from(data:HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>, len : usize) -> WritesPlaceholder {
         WritesPlaceholder {
             data,
             results : (0..len).map(|_| UnsafeCell::new((VMStatus::Executed, TransactionOutput::new(
@@ -177,7 +115,7 @@ impl WritesPlaceholder {
         return (self.success_num.load(Ordering::Relaxed), self.failure_num.load(Ordering::Relaxed))
     }
 
-    pub fn get_all_results(self) -> (Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>, HashMap<AccessPathKey, BTreeMap<usize, WriteVersionValue>>){
+    pub fn get_all_results(self) -> (Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>, HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>){
 
         let (results, data) = (self.results, self.data);
         (Ok(
@@ -191,7 +129,7 @@ impl WritesPlaceholder {
         self.data.len()
     }
 
-    pub fn write(&self, key: &AccessPathKey, version: usize, data: Option<Vec<u8>>) -> Result<(), ()> {
+    pub fn write(&self, key: &AccessPath, version: usize, data: Option<Vec<u8>>) -> Result<(), ()> {
         // By construction there will only be a single writer, before the
         // write there will be no readers on the variable.
         // So it is safe to go ahead and write without any further check.
@@ -222,7 +160,7 @@ impl WritesPlaceholder {
     }
 
 
-    pub fn skip_if_not_set(&self, key: &AccessPathKey, version: usize) -> Result<(), ()> {
+    pub fn skip_if_not_set(&self, key: &AccessPath, version: usize) -> Result<(), ()> {
         // We only write or skip once per entry
         // So it is safe to go ahead and just do it.
         let entry = self
@@ -240,7 +178,7 @@ impl WritesPlaceholder {
     }
 
 
-    pub fn skip(&self, key: &AccessPathKey, version: usize) -> Result<(), ()> {
+    pub fn skip(&self, key: &AccessPath, version: usize) -> Result<(), ()> {
         // We only write or skip once per entry
         // So it is safe to go ahead and just do it.
         let entry = self
@@ -264,7 +202,7 @@ impl WritesPlaceholder {
 
     pub fn read(
         &self,
-        key: &AccessPathKey,
+        key: &AccessPath,
         version: usize,
     ) -> Result<&Option<Vec<u8>>, Option<usize>> {
 
@@ -419,7 +357,7 @@ impl<'view> VersionedStateView<'view>{
         }
     }
 
-    pub fn will_read_block(&self, access_path: &AccessPathKey) -> bool {
+    pub fn will_read_block(&self, access_path: &AccessPath) -> bool {
         let read = self.placeholder.read(access_path, self.version);
         if let Err(Some(_)) = read {
             return true;
@@ -435,7 +373,7 @@ impl<'view> VersionedStateView<'view>{
         let mut loop_iterations = 0;
         loop {
 
-            let read = self.placeholder.read(&AccessPathKey::from(access_path), self.version);
+            let read = self.placeholder.read(access_path, self.version);
 
             // Go to the Database
             if let Err(None) = read{
@@ -469,7 +407,7 @@ impl<'block> StateView for VersionedStateView<'block> {
         let mut loop_iterations = 0;
         loop {
 
-            let read = self.placeholder.read(&AccessPathKey::from(access_path), self.version);
+            let read = self.placeholder.read(access_path, self.version);
 
             // Go to the Database
             if let Err(None) = read{

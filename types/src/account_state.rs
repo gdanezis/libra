@@ -140,7 +140,7 @@ impl AccountState {
 
     pub fn get_vm_publishing_option(&self) -> Result<Option<VMPublishingOption>> {
         self.0
-            .get(VMPublishingOption::CONFIG_ID.access_path().borrow_path())
+            .get(&VMPublishingOption::CONFIG_ID.access_path().path)
             .map(|bytes| VMPublishingOption::deserialize_into_config(bytes))
             .transpose()
             .map_err(Into::into)
@@ -155,7 +155,7 @@ impl AccountState {
                 for code in codes {
                     let access_path = CurrencyInfoResource::resource_path_for(code.clone());
                     let info: CurrencyInfoResource = self
-                        .get_resource_impl(access_path.borrow_path())?
+                        .get_resource_impl(&access_path.path)?
                         .ok_or_else(|| format_err!("currency info resource not found: {}", code))?;
                     resources.push(info);
                 }
@@ -194,7 +194,7 @@ impl AccountState {
     }
 
     pub fn get_config<T: OnChainConfig>(&self) -> Result<Option<T>> {
-        self.get_resource_impl(T::CONFIG_ID.access_path().borrow_path())
+        self.get_resource_impl(&T::CONFIG_ID.access_path().path)
     }
 
     pub fn get_resource<T: MoveResource + DeserializeOwned>(&self) -> Result<Option<T>> {

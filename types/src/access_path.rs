@@ -48,7 +48,7 @@ use std::fmt;
 pub struct AccessPath {
     pub address: AccountAddress,
     #[serde(with = "serde_bytes")]
-    path: Vec<u8>,
+    pub path: Vec<u8>,
 }
 
 #[derive(Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Ord, PartialOrd)]
@@ -60,15 +60,6 @@ pub enum Path {
 impl AccessPath {
     pub fn new(address: AccountAddress, path: Vec<u8>) -> Self {
         AccessPath { address, path }
-    }
-
-    pub fn borrow_path(&self) -> &Vec<u8>{
-        &self.path
-    }
-
-    pub fn into_address_path(self) -> (AccountAddress, Vec<u8>)
-    {
-        (self.address, self.path)
     }
 
     pub fn resource_access_vec(tag: StructTag) -> Vec<u8> {
