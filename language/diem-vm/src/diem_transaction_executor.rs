@@ -918,9 +918,10 @@ impl DiemVM {
             }
         }
 
-        // use std::cell::UnsafeCell;
-        let data = split_merge(cpus, 0, path_version_tuples);
-        let outcomes = OutcomeArray::new(num_txns);
+        let (data, outcomes) = rayon::join(
+            || split_merge(cpus, 0, path_version_tuples),
+            || OutcomeArray::new(num_txns),
+        );
 
         let placeholders = WritesPlaceholder::new_from(
             data,
