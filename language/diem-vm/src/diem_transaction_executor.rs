@@ -1053,7 +1053,12 @@ impl DiemVM {
 
 
                     }
-                    println!("   - Exec thread: wait {} proceed {}", wait_num, proceed_num);
+                    // println!("   - Exec thread: wait {} proceed {}", wait_num, proceed_num);
+                    // Dropping large structures is expensive -- do this is a separate thread.
+                    thread::spawn(move || {
+                        drop(thread_data_cache); // Explicit drops to measure their cost.
+                        drop(thread_vm);
+                    });
                 });
             }
 
@@ -1072,8 +1077,8 @@ impl DiemVM {
         let (num_success, num_fail) = outcomes.get_stats();
         println!("Block: {} success, {} failures", num_success, num_fail);
 
-        let change_set = placeholders.get_change_set();
-        data_cache.push_changes(change_set);
+        //let change_set = placeholders.get_change_set();
+        //data_cache.push_changes(change_set);
         let all_results = outcomes.get_all_results();
 
         use std::thread;
