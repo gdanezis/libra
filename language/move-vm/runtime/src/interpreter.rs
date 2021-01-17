@@ -29,6 +29,8 @@ use vm::{
     file_format_common::Opcodes,
 };
 
+use std::rc::Rc;
+
 macro_rules! debug_write {
     ($($toks: tt)*) => {
         write!($($toks)*).map_err(|_|
@@ -71,7 +73,7 @@ impl<L: LogContext> Interpreter<L> {
     /// Entrypoint into the interpreter. All external calls need to be routed through this
     /// function.
     pub(crate) fn entrypoint(
-        function: Arc<Function>,
+        function: Rc<Function>,
         ty_args: Vec<Type>,
         args: Vec<Value>,
         data_store: &mut impl DataStore,
@@ -101,7 +103,7 @@ impl<L: LogContext> Interpreter<L> {
         loader: &Loader,
         data_store: &mut impl DataStore,
         cost_strategy: &mut CostStrategy,
-        function: Arc<Function>,
+        function: Rc<Function>,
         ty_args: Vec<Type>,
         args: Vec<Value>,
     ) -> VMResult<()> {
@@ -123,7 +125,7 @@ impl<L: LogContext> Interpreter<L> {
         loader: &Loader,
         data_store: &mut impl DataStore,
         cost_strategy: &mut CostStrategy,
-        function: Arc<Function>,
+        function: Rc<Function>,
         ty_args: Vec<Type>,
         args: Vec<Value>,
     ) -> VMResult<()> {
@@ -231,7 +233,7 @@ impl<L: LogContext> Interpreter<L> {
     ///
     /// Native functions do not push a frame at the moment and as such errors from a native
     /// function are incorrectly attributed to the caller.
-    fn make_call_frame(&mut self, func: Arc<Function>, ty_args: Vec<Type>) -> VMResult<Frame> {
+    fn make_call_frame(&mut self, func: Rc<Function>, ty_args: Vec<Type>) -> VMResult<Frame> {
         let mut locals = Locals::new(func.local_count());
         let arg_count = func.arg_count();
         for i in 0..arg_count {
@@ -251,7 +253,7 @@ impl<L: LogContext> Interpreter<L> {
         resolver: &Resolver,
         data_store: &mut dyn DataStore,
         cost_strategy: &mut CostStrategy,
-        function: Arc<Function>,
+        function: Rc<Function>,
         ty_args: Vec<Type>,
     ) -> VMResult<()> {
         // Note: refactor if native functions push a frame on the stack
@@ -279,7 +281,7 @@ impl<L: LogContext> Interpreter<L> {
         resolver: &Resolver,
         data_store: &mut dyn DataStore,
         cost_strategy: &mut CostStrategy,
-        function: Arc<Function>,
+        function: Rc<Function>,
         ty_args: Vec<Type>,
     ) -> PartialVMResult<()> {
         let mut arguments = VecDeque::new();
@@ -664,7 +666,7 @@ impl CallStack {
 struct Frame {
     pc: u16,
     locals: Locals,
-    function: Arc<Function>,
+    function: Rc<Function>,
     ty_args: Vec<Type>,
     resolver_token : Option<ResolverToken>
 }
@@ -681,7 +683,7 @@ impl Frame {
     /// Create a new `Frame` given a `Function` and the function `Locals`.
     ///
     /// The locals must be loaded before calling this.
-    fn new(function: Arc<Function>, ty_args: Vec<Type>, locals: Locals) -> Self {
+    fn new(function: Rc<Function>, ty_args: Vec<Type>, locals: Locals) -> Self {
         Frame {
             pc: 0,
             locals,
