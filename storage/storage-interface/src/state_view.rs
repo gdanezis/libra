@@ -143,7 +143,7 @@ impl<'a> StateView for VerifiedStateView<'a> {
 
     fn get(&self, access_path: &AccessPath) -> Result<Option<Vec<u8>>> {
         let address = access_path.address;
-        let path = &access_path.path;
+        let path = access_path.borrow_path();
 
         // Lock for read first:
         if let Some(contents) = self.account_to_state_cache.read().get(&address) {

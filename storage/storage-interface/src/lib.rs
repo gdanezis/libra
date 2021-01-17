@@ -355,7 +355,7 @@ impl MoveStorage for &dyn DbReader {
                 Ok(account_states
                     .get(&path.address)
                     .ok_or_else(|| format_err!("missing account state for queried access path"))?
-                    .get(&path.path)
+                    .get(path.borrow_path())
                     .ok_or_else(|| format_err!("no value found in account state"))?
                     .clone())
             })

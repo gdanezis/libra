@@ -50,6 +50,17 @@ use std::cmp::max;
 use std::collections::{HashMap, BTreeMap};
 use std::sync::Arc;
 
+
+use crate::scheduler_parallel::{
+    WritesPlaceholder,
+    VersionedStateView,
+    SingleThreadReadCache,
+    WriteVersionValue,
+    AccessPathKey
+};
+use num_cpus;
+use twox_hash::RandomXxHashBuilder64;
+
 #[derive(Clone)]
 pub struct DiemVM(DiemVMImpl);
 
@@ -796,14 +807,6 @@ impl DiemVM {
 
         let mut exec_tally : u128 = 0;
 
-        use crate::scheduler_parallel::{
-            WritesPlaceholder,
-            VersionedStateView,
-            SingleThreadReadCache,
-            WriteVersionValue
-        };
-        use num_cpus;
-
         // Count and print the number of transactions.
         let num_txns = transactions.len();
         let cpus = num_cpus::get();
@@ -854,7 +857,7 @@ impl DiemVM {
 
         // Analyse each user script for its write-set and create the placeholder structure
         // that allows for parallel execution.
-        let path_version_tuples : Vec<Vec<(AccessPath, usize)>> = signature_verified_block
+        let path_version_tuples : Vec<Vec<(AccessPathKey, usize)>> = signature_verified_block
                 .par_iter()
                 .enumerate()
                 .with_min_len(chunks)
@@ -876,7 +879,7 @@ impl DiemVM {
                         // Create the dependency structure
                         let deps = read_write_infer.get(script.code()).unwrap();
                         acc.extend(deps.writes(&params).map(
-                            |w| (w, idx)
+                            |w| (AccessPathKey::from(w), idx)
                         ));
                     }
                     _ => { unreachable!() }
@@ -896,10 +899,10 @@ impl DiemVM {
 
         let execute_start = std::time::Instant::now();
 
-        let path_version_tuples : Vec<(AccessPath, usize)> = path_version_tuples.into_iter().flatten().collect();
-        fn split_merge(num_cpus : usize, num: usize, split: Vec<(AccessPath, usize)>) -> HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>> {
+        let path_version_tuples : Vec<(AccessPathKey, usize)> = path_version_tuples.into_iter().flatten().collect();
+        fn split_merge(num_cpus : usize, num: usize, split: Vec<(AccessPathKey, usize)>) -> HashMap<AccessPathKey, BTreeMap<usize, WriteVersionValue>, RandomXxHashBuilder64> {
             if ((2 << num) > num_cpus) || split.len() < 1000 {
-                let mut data = HashMap::new();
+                let mut data = HashMap::default();
                 for (path, version) in split.into_iter() {
                     data.entry(path).or_insert(BTreeMap::new()).insert(version, WriteVersionValue::new());
                 }
@@ -999,7 +1002,7 @@ impl DiemVM {
                             let versioned_state_view = VersionedStateView::new(idx, &thread_data_cache, &placeholders);
 
                             // Delay and move to next tx if cannot execure now.
-                            if deps.reads(&params).any(|k| versioned_state_view.will_read_block(&k) ) {
+                            if deps.reads(&params).any(|k| versioned_state_view.will_read_block(&AccessPathKey::from(k)) ) {
                                 // println!("Delay {}", idx);
                                 tx_idx_ring_buffer.push_back( (idx, txn, params, deps) );
                                 wait_num += 1;
@@ -1024,11 +1027,11 @@ impl DiemVM {
                                                 WriteOp::Value(data) => Some(data.clone()),
                                             };
 
-                                            placeholders.write(k, idx, val).unwrap();
+                                            placeholders.write(&AccessPathKey::from(k), idx, val).unwrap();
                                         }
 
                                         for w in deps.writes(&params) {
-                                            placeholders.skip_if_not_set(&w, idx).unwrap();
+                                            placeholders.skip_if_not_set(&AccessPathKey::from(w), idx).unwrap();
                                         }
 
                                         // Commit the results to the data cache
@@ -1036,7 +1039,7 @@ impl DiemVM {
                                     } else {
 
                                         for w in deps.writes(&params) {
-                                            placeholders.skip(&w, idx).unwrap();
+                                            placeholders.skip(&AccessPathKey::from(w), idx).unwrap();
                                         }
 
                                         placeholders.set_result(idx, (vm_status, output), false);
@@ -1346,18 +1349,16 @@ impl<'a> ScriptReadWriteSetVarIter<'a> {
 
 impl<'a> Iterator for ScriptReadWriteSetVarIter<'a> {
     // we will be counting with usize
-    type Item = AccessPath;
+    type Item = AccessPathKey;
 
     // next() is the only required method
     fn next(&mut self) -> Option<Self::Item> {
         if self.seq < self.array.len() {
             let (v, p) = &self.array[self.seq];
             let current_item = match v {
-                ScriptReadWriteSetVar::Const => p.clone(),
+                ScriptReadWriteSetVar::Const => AccessPathKey::from(p),
                 ScriptReadWriteSetVar::Param(i) => {
-                    let mut p = p.clone();
-                    p.address = self.params[*i];
-                    p
+                    AccessPathKey::from_address_path(&self.params[*i], p.borrow_path())
                 }
             };
             self.seq += 1;

@@ -942,8 +942,8 @@ pub fn process_write_set(
     // Find all addresses this transaction touches while processing each write op.
     let mut addrs = HashSet::new();
     for (access_path, write_op) in write_set.into_iter() {
-        let address = access_path.address;
-        let path = access_path.path;
+        // let address = access_path.address;
+        let (address, path) = access_path.into_address_path();
         match account_to_state.entry(address) {
             hash_map::Entry::Occupied(mut entry) => {
                 update_account_state(entry.get_mut(), path, write_op);
