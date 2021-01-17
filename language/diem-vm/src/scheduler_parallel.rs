@@ -107,7 +107,7 @@ unsafe impl Sync for WritesPlaceholder {}
 //  but no entries can be added or deleted.
 //
 pub(crate) struct WritesPlaceholder {
-    data: HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>,
+    pub data: HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>,
 }
 
 
@@ -119,7 +119,7 @@ use diem_types::{
 };
 
 impl WritesPlaceholder {
-    pub fn new(len : usize) -> WritesPlaceholder {
+    pub fn new() -> WritesPlaceholder {
         WritesPlaceholder {
             data: HashMap::new(),
         }
