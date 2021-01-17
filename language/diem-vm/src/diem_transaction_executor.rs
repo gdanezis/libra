@@ -898,27 +898,30 @@ impl DiemVM {
         let execute_start = std::time::Instant::now();
 
         // let path_version_tuples : Vec<(AccessPath, usize)> = path_version_tuples.into_iter().flatten().collect();
-        fn split_merge(num_cpus : usize, num: usize, split: Vec<(AccessPath, usize)>) -> HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>> {
+        fn split_merge(num_cpus : usize, num: usize, split: Vec<(AccessPath, usize)>) -> (usize, HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>) {
             if ((2 << num) > num_cpus) || split.len() < 1000 {
                 let mut data = HashMap::new();
+                let mut max_len = 0;
                 for (path, version) in split.into_iter() {
-                    data.entry(path).or_insert(BTreeMap::new()).insert(version, WriteVersionValue::new());
+                    let place = data.entry(path).or_insert(BTreeMap::new());
+                    place.insert(version, WriteVersionValue::new());
+                    max_len = max(max_len, place.len());
                 }
-                data
+                (max_len , data)
             }
             else {
                 let pivot_address = split[split.len()/2].0.clone();
                 let (left, right): (Vec<_>, Vec<_>) = split.into_iter().partition(|(p,v)| *p < pivot_address);
-                let (mut left_map, right_map) = rayon::join(
+                let ((m0, mut left_map), (m1, right_map)) = rayon::join(
                     || split_merge(num_cpus, num + 1, left),
                     || split_merge(num_cpus, num + 1, right),
                 );
                 left_map.extend(right_map);
-                left_map
+                (max(m0,m1), left_map)
             }
         }
 
-        let (data, outcomes) = rayon::join(
+        let ((max_len, data), outcomes) = rayon::join(
             || split_merge(cpus, 0, path_version_tuples),
             || OutcomeArray::new(num_txns),
         );
@@ -948,10 +951,11 @@ impl DiemVM {
 
         scope(|s| {
             // How many threads to use?
-            let compute_cpus = 1 + min( num_txns / 50, 2 * cpus / 3);
+            let compute_cpus = min( 1 + (num_txns / 50), cpus - 1);     // Ensure we have at least 50 tx per thread.
+            let compute_cpus = min( 1 + (num_txns / max_len), compute_cpus);  // Ensure we do not higher rate of conflict than concurrency.
 
-            println!("Launching {} threads to execute ...", compute_cpus-1);
-            for _ in 0..(compute_cpus-1) {
+            println!("Launching {} threads to execute (Max conflict {}) ...", compute_cpus, max_len);
+            for _ in 0..(compute_cpus) {
                 s.spawn( |_| {
                     // Make a per thread cache to de-congest mem bus
                     let thread_data_cache = SingleThreadReadCache::new(data_cache);
