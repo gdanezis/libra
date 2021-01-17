@@ -900,7 +900,7 @@ impl DiemVM {
         let execute_start = std::time::Instant::now();
 
         let path_version_tuples : Vec<(AccessPathKey, usize)> = path_version_tuples.into_iter().flatten().collect();
-        fn split_merge(num_cpus : usize, num: usize, split: Vec<(AccessPathKey, usize)>) -> HashMap<AccessPathKey, BTreeMap<usize, WriteVersionValue>, RandomXxHashBuilder64> {
+        fn split_merge(num_cpus : usize, num: usize, split: Vec<(AccessPathKey, usize)>) -> HashMap<AccessPathKey, BTreeMap<usize, WriteVersionValue>> {
             if ((2 << num) > num_cpus) || split.len() < 1000 {
                 let mut data = HashMap::default();
                 for (path, version) in split.into_iter() {

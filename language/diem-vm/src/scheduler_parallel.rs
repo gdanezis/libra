@@ -46,7 +46,7 @@ unsafe impl Sync for WritesPlaceholder {}
 //  but no entries can be added or deleted.
 //
 pub(crate) struct WritesPlaceholder {
-    data: HashMap<AccessPathKey, BTreeMap<usize, WriteVersionValue>, RandomXxHashBuilder64>,
+    data: HashMap<AccessPathKey, BTreeMap<usize, WriteVersionValue>>,
     results : Vec<UnsafeCell<(VMStatus, TransactionOutput)>>,
 
     success_num : AtomicUsize,
@@ -137,7 +137,7 @@ impl WritesPlaceholder {
         }
     }
 
-    pub fn new_from(data:HashMap<AccessPathKey, BTreeMap<usize, WriteVersionValue>, RandomXxHashBuilder64>, len : usize) -> WritesPlaceholder {
+    pub fn new_from(data:HashMap<AccessPathKey, BTreeMap<usize, WriteVersionValue>>, len : usize) -> WritesPlaceholder {
         WritesPlaceholder {
             data,
             results : (0..len).map(|_| UnsafeCell::new((VMStatus::Executed, TransactionOutput::new(
@@ -177,7 +177,7 @@ impl WritesPlaceholder {
         return (self.success_num.load(Ordering::Relaxed), self.failure_num.load(Ordering::Relaxed))
     }
 
-    pub fn get_all_results(self) -> (Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>, HashMap<AccessPathKey, BTreeMap<usize, WriteVersionValue>, RandomXxHashBuilder64>){
+    pub fn get_all_results(self) -> (Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>, HashMap<AccessPathKey, BTreeMap<usize, WriteVersionValue>>){
 
         let (results, data) = (self.results, self.data);
         (Ok(
