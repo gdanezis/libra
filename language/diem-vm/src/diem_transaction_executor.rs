@@ -948,7 +948,7 @@ impl DiemVM {
 
         scope(|s| {
             // How many threads to use?
-            let compute_cpus = min( num_txns / 250, cpus);
+            let compute_cpus = 1 + min( num_txns / 50, 2 * cpus / 3);
 
             println!("Launching {} threads to execute ...", compute_cpus-1);
             for _ in 0..(compute_cpus-1) {
