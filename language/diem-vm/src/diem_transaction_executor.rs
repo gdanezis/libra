@@ -1054,11 +1054,6 @@ impl DiemVM {
 
                     }
                     // println!("   - Exec thread: wait {} proceed {}", wait_num, proceed_num);
-                    // Dropping large structures is expensive -- do this is a separate thread.
-                    thread::spawn(move || {
-                        drop(thread_data_cache); // Explicit drops to measure their cost.
-                        drop(thread_vm);
-                    });
                 });
             }
 
