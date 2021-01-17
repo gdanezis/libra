@@ -70,10 +70,7 @@ impl AccessPath {
     /// where fields are stored.
     pub fn resource_access_path(key: ResourceKey) -> AccessPath {
         let path = AccessPath::resource_access_vec(key.type_);
-        AccessPath {
-            address: key.address,
-            path,
-        }
+        AccessPath::new(key.address, path)
     }
 
     fn code_access_path_vec(key: ModuleId) -> Vec<u8> {
@@ -83,7 +80,7 @@ impl AccessPath {
     pub fn code_access_path(key: ModuleId) -> AccessPath {
         let address = *key.address();
         let path = AccessPath::code_access_path_vec(key);
-        AccessPath { address, path }
+        AccessPath::new(address, path)
     }
 
     /// Extract the structured resource or module `Path` from `self`
@@ -139,9 +136,6 @@ impl fmt::Display for AccessPath {
 
 impl From<&ModuleId> for AccessPath {
     fn from(id: &ModuleId) -> AccessPath {
-        AccessPath {
-            address: *id.address(),
-            path: id.access_vector(),
-        }
+        AccessPath::new(*id.address(), id.access_vector())
     }
 }
