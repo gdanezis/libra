@@ -107,8 +107,17 @@ def make_svg(profile):
         ordered_from = sorted(((called_from[k],k) for k in called_from), reverse=True)
         for (num_link, (lname_from, name_from)) in ordered_from:
             (num_from,_,_,idg_from) = profile[(lname_from, name_from)]
-            if num_link > 100 and idg != 999:
-                print(f'  X{idg_from} -> X{idg};')
+            if num_link/total > 0.001 and idg != 999:
+
+                if num_link/total > 0.1:
+                    color = 'red'
+                elif num_link/total > 0.01:
+                    color = 'orange'
+                else:
+                    color = 'grey'
+
+
+                print(f'  X{idg_from} -> X{idg} [color = {color}];')
                 saved.add(l)
                 saved.add((lname_from, name_from))
 
