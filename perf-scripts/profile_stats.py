@@ -74,7 +74,7 @@ def make_html(profile):
         if stars_num == 0:
             stars = ''
             continue
-        print(f'<a id="R{idg}"></a><input type="checkbox" style="display: none" id="X{idg}" checked><label class="highlight" for="X{idg}">{num:8} | {stars:12} | {len(called_from):3} -> {(len(called_to)-1):3} | {l[0]}::<a class="highlight" href="">{l[1].strip()}</a></label>')
+        print(f'<a id="R{idg}"></a><input type="checkbox" style="display: none" id="X{idg}" checked><label class="highlight" for="X{idg}">{num:8} | {stars:12} | {len(called_from):3} -> {(len(called_to)-1):3} | {l[0]}::<span class="highlight" >{l[1].strip()}</span></label>')
 
         ordered_from = sorted(((called_from[k],k) for k in called_from), reverse=True)
         ordered_to = sorted(((called_to[k],k) for k in called_to), reverse=True)

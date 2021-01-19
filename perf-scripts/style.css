@@ -1,0 +1,33 @@
+label.highlight {
+    color: black; text-decoration: none;
+}
+
+span.highlight {
+    color: black; text-decoration: none;
+    font-weight: bold;
+}
+
+a.mute {
+    color: lightgrey; text-decoration: none;
+}
+
+a {
+    color: black; text-decoration: none;
+}
+
+a.mute:hover {
+    color: block; text-decoration: none;
+    font-weight: bold;
+}
+
+a:hover {
+    color: black; text-decoration: none;
+    font-weight: bold;
+}
+
+input:checked + label + div { display: none; }
+input + label:after {
+    content: " (hide)";
+    color: lightgrey;
+}
+input:checked + label:after { content: " (more)"; }
