@@ -44,9 +44,9 @@ pub enum TypeTag {
     BCSCryptoHash,
 )]
 pub struct StructTag {
+    pub name: Identifier,
     pub address: AccountAddress,
     pub module: Identifier,
-    pub name: Identifier,
     // TODO: rename to "type_args" (or better "ty_args"?)
     pub type_params: Vec<TypeTag>,
 }

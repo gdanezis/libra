@@ -45,10 +45,10 @@ use std::fmt;
 
 use std::cell::RefCell;
 use std::thread;
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 
 // A thread local cache ...
-thread_local!(static CACHE_AP: RefCell<HashMap<StructTag, Vec<u8>>> = RefCell::new(HashMap::new()));
+thread_local!(static CACHE_AP: RefCell<BTreeMap<StructTag, Vec<u8>>> = RefCell::new(BTreeMap::new()));
 
 #[derive(Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Ord, PartialOrd)]
 #[cfg_attr(any(test, feature = "fuzzing"), derive(Arbitrary))]
