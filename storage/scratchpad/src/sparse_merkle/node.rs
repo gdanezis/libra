@@ -27,55 +27,57 @@ use diem_types::{
     proof::{SparseMerkleInternalNode, SparseMerkleLeafNode},
 };
 use std::sync::Arc;
+use std::rc::Rc;
+use std::cell::{RefCell, Ref, RefMut};
 
 /// We wrap the node in `RwLock`. The only case when we will update the node is when we
 /// drop a subtree originated from this node and commit things to storage. In that case we will
 /// replace the an `InternalNode` or a `LeafNode` with a `SubtreeNode`.
 #[derive(Debug)]
 pub struct SparseMerkleNode {
-    node: RwLock<Node>,
+    node: RefCell<Node>,
 }
 
 impl SparseMerkleNode {
     /// Constructs a new internal node given two children.
     pub fn new_internal(
-        left_child: Arc<SparseMerkleNode>,
-        right_child: Arc<SparseMerkleNode>,
+        left_child: Rc<SparseMerkleNode>,
+        right_child: Rc<SparseMerkleNode>,
     ) -> Self {
         SparseMerkleNode {
-            node: RwLock::new(Node::new_internal(left_child, right_child)),
+            node: RefCell::new(Node::new_internal(left_child, right_child)),
         }
     }
 
     /// Constructs a new leaf node using given key and value.
     pub fn new_leaf(key: HashValue, value: LeafValue) -> Self {
         SparseMerkleNode {
-            node: RwLock::new(Node::new_leaf(key, value)),
+            node: RefCell::new(Node::new_leaf(key, value)),
         }
     }
 
     /// Constructs a new subtree node with given root hash.
     pub fn new_subtree(hash: HashValue) -> Self {
         SparseMerkleNode {
-            node: RwLock::new(Node::new_subtree(hash)),
+            node: RefCell::new(Node::new_subtree(hash)),
         }
     }
 
     /// Constructs a new empty node.
     pub fn new_empty() -> Self {
         SparseMerkleNode {
-            node: RwLock::new(Node::new_empty()),
+            node: RefCell::new(Node::new_empty()),
         }
     }
 
     /// Get the read access of the wrapped node.
-    pub fn read_lock(&self) -> RwLockReadGuard<Node> {
-        self.node.read()
+    pub fn read_lock(&self) -> Ref<Node> {
+        self.node.borrow()
     }
 
     /// Get the write access of the wrapped node.
-    pub fn write_lock(&self) -> RwLockWriteGuard<Node> {
-        self.node.write()
+    pub fn write_lock(&self) -> RefMut<Node> {
+        self.node.borrow_mut()
     }
 }
 
@@ -90,8 +92,8 @@ pub enum Node {
 
 impl Node {
     pub fn new_internal(
-        left_child: Arc<SparseMerkleNode>,
-        right_child: Arc<SparseMerkleNode>,
+        left_child: Rc<SparseMerkleNode>,
+        right_child: Rc<SparseMerkleNode>,
     ) -> Self {
         Node::Internal(InternalNode::new(left_child, right_child))
     }
@@ -135,14 +137,14 @@ pub struct InternalNode {
     hash: HashValue,
 
     /// Pointer to left child.
-    left_child: Arc<SparseMerkleNode>,
+    left_child: Rc<SparseMerkleNode>,
 
     /// Pointer to right child.
-    right_child: Arc<SparseMerkleNode>,
+    right_child: Rc<SparseMerkleNode>,
 }
 
 impl InternalNode {
-    fn new(left_child: Arc<SparseMerkleNode>, right_child: Arc<SparseMerkleNode>) -> Self {
+    fn new(left_child: Rc<SparseMerkleNode>, right_child: Rc<SparseMerkleNode>) -> Self {
         match (&*left_child.read_lock(), &*right_child.read_lock()) {
             (Node::Subtree(_), Node::Subtree(_)) => {
                 panic!("Two subtree children should have been merged into a single subtree node.")
@@ -172,12 +174,12 @@ impl InternalNode {
         self.hash
     }
 
-    pub fn clone_left_child(&self) -> Arc<SparseMerkleNode> {
-        Arc::clone(&self.left_child)
+    pub fn clone_left_child(&self) -> Rc<SparseMerkleNode> {
+        Rc::clone(&self.left_child)
     }
 
-    pub fn clone_right_child(&self) -> Arc<SparseMerkleNode> {
-        Arc::clone(&self.right_child)
+    pub fn clone_right_child(&self) -> Rc<SparseMerkleNode> {
+        Rc::clone(&self.right_child)
     }
 }
 
