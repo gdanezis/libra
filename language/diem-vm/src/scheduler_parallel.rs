@@ -471,7 +471,7 @@ impl<'view> RemoteCache for VersionedStateView<'view> {
         address: &AccountAddress,
         struct_tag: &StructTag,
     ) -> PartialVMResult<Option<Vec<u8>>> {
-        let ap = create_access_path(*address, struct_tag.clone());
+        let ap = create_access_path(*address, struct_tag);
         self.get(&ap).map_err(|_| PartialVMError::new(StatusCode::STORAGE_ERROR))
     }
 
@@ -480,7 +480,7 @@ impl<'view> RemoteCache for VersionedStateView<'view> {
         address: &AccountAddress,
         struct_tag: &StructTag,
     ) -> PartialVMResult<Option<RefBytes>>{
-        let ap = create_access_path(*address, struct_tag.clone());
+        let ap = create_access_path(*address, struct_tag);
         self.get_ref(&ap).map_err(|_| PartialVMError::new(StatusCode::STORAGE_ERROR))
     }
 }

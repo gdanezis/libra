@@ -69,14 +69,14 @@ impl AccessPath {
         AccessPath { address, path }
     }
 
-    pub fn resource_access_vec(tag: StructTag) -> Vec<u8> {
+    pub fn resource_access_vec(tag: &StructTag) -> Vec<u8> {
         CACHE_AP.with(|f| {
-            if f.borrow().contains_key(&tag){
-                return f.borrow().get(&tag).unwrap().clone()
+            if f.borrow().contains_key(tag){
+                return f.borrow().get(tag).unwrap().clone()
             }
             else {
                 let val = bcs::to_bytes(&Path::Resource(tag.clone())).expect("Unexpected serialization error");
-                f.borrow_mut().insert(tag, val.clone());
+                f.borrow_mut().insert(tag.clone(), val.clone());
                 val
             }
         })
@@ -84,9 +84,9 @@ impl AccessPath {
 
     /// Convert Accesses into a byte offset which would be used by the storage layer to resolve
     /// where fields are stored.
-    pub fn resource_access_path(key: ResourceKey) -> AccessPath {
-        let path = AccessPath::resource_access_vec(key.type_);
-        AccessPath::new(key.address, path)
+    pub fn resource_access_path(address : AccountAddress, tag: &StructTag) -> AccessPath {
+        let path = AccessPath::resource_access_vec(tag);
+        AccessPath::new(address, path)
     }
 
     fn code_access_path_vec(key: ModuleId) -> Vec<u8> {

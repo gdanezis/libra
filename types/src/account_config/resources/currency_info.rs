@@ -110,11 +110,7 @@ impl CurrencyInfoResource {
     }
 
     pub fn resource_path_for(currency_code: Identifier) -> AccessPath {
-        let resource_key = ResourceKey::new(
-            diem_root_address(),
-            CurrencyInfoResource::struct_tag_for(currency_code),
-        );
-        AccessPath::resource_access_path(resource_key)
+        AccessPath::resource_access_path(diem_root_address(), &CurrencyInfoResource::struct_tag_for(currency_code))
     }
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self> {

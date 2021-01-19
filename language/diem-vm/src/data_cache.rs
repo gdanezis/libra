@@ -197,7 +197,7 @@ impl<'a, S: StateView> RemoteCache for RemoteStorage<'a, S> {
         address: &AccountAddress,
         struct_tag: &StructTag,
     ) -> PartialVMResult<Option<Vec<u8>>> {
-        let ap = create_access_path(*address, struct_tag.clone());
+        let ap = create_access_path(*address, struct_tag);
         self.get(&ap)
     }
 }

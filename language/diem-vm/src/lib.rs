@@ -161,7 +161,6 @@ pub trait VMExecutor { // }: Send {
 }
 
 /// Get the AccessPath to a resource stored under `address` with type name `tag`
-fn create_access_path(address: AccountAddress, tag: StructTag) -> AccessPath {
-    let resource_tag = ResourceKey::new(address, tag);
-    AccessPath::resource_access_path(resource_tag)
+fn create_access_path(address: AccountAddress, tag: &StructTag) -> AccessPath {
+    AccessPath::resource_access_path(address, tag)
 }
