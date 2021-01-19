@@ -1541,8 +1541,7 @@ impl Script {
             name,
 
             // Populate dynamically
-            flag: AtomicUsize::new(0),
-            resolver_token: UnsafeCell::new(None),
+            resolver_token: RefCell::new(None),
         });
 
         Ok(Self {
@@ -1586,12 +1585,6 @@ enum Scope {
     Script(HashValue),
 }
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::cell::UnsafeCell;
-
-unsafe impl Send for Function {}
-unsafe impl Sync for Function {}
-
 // A runtime function
 #[derive(Debug)]
 pub(crate) struct Function {
@@ -1606,8 +1599,7 @@ pub(crate) struct Function {
     name: Identifier,
 
     // Populate dynamically
-    flag: AtomicUsize,
-    resolver_token: UnsafeCell<Option<ResolverToken>>,
+    resolver_token: RefCell<Option<ResolverToken>>,
 }
 
 impl Function {
@@ -1657,8 +1649,7 @@ impl Function {
             native,
             scope,
             name,
-            flag : AtomicUsize::new(0),
-            resolver_token : UnsafeCell::new(None),
+            resolver_token : RefCell::new(None),
         }
     }
 
@@ -1695,45 +1686,23 @@ impl Function {
 
     pub(crate) fn get_resolver_token<'a>(&self, loader: &'a Loader) -> ResolverToken {
 
-        let val = self.flag.load(Ordering::SeqCst);
-        if val != 3 {
-            // This is not ready so get a token (before changing the state)
-            let token = match &self.scope {
-                Scope::Module(module_id) => {
-                    let module = loader.get_module(module_id);
-                    ResolverToken { bin_type : BinaryType::Module(module) }
-                }
-                Scope::Script(script_hash) => {
-                    let script = loader.get_script(script_hash);
-                    ResolverToken { bin_type : BinaryType::Script(script) }
-                }
-            };
+        if let Some(token) = self.resolver_token.borrow().as_ref() {
+            return token.clone();
+        }
 
-            // Spin until we or someone else writes
-            loop {
-                let val = self.flag.compare_and_swap(0, 1, Ordering::Acquire);
-
-                // We have the token so lets proceed and write.
-                if val == 0 {
-                    unsafe {
-                        let exclusive: &mut Option<ResolverToken> = &mut *self.resolver_token.get();
-                        *exclusive = Some(token);
-                    }
-
-                    self.flag.store(3, Ordering::Release);
-                    break;
-                }
-
-                if val == 3 { break }
-
-                spin_loop_hint();
+        let token = match &self.scope {
+            Scope::Module(module_id) => {
+                let module = loader.get_module(module_id);
+                ResolverToken { bin_type : BinaryType::Module(module) }
             }
-        }
+            Scope::Script(script_hash) => {
+                let script = loader.get_script(script_hash);
+                ResolverToken { bin_type : BinaryType::Script(script) }
+            }
+        };
 
-        unsafe {
-            let shared: &Option<ResolverToken> = &*self.resolver_token.get();
-            shared.clone().unwrap()
-        }
+        *self.resolver_token.borrow_mut() = Some(token.clone());
+        token.clone()
     }
 
     pub(crate) fn local_count(&self) -> usize {
