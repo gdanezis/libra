@@ -17,7 +17,7 @@ use crate::{
 };
 use diem_logger::prelude::*;
 use diem_state_view::StateView;
-use diem_trace::prelude::*;
+
 use diem_types::{
     access_path::AccessPath,
     account_config,
@@ -48,7 +48,7 @@ use std::{
 
 use std::cmp::{max, min};
 use std::collections::{HashMap, BTreeMap};
-use std::sync::Arc;
+use num_cpus;
 
 #[derive(Clone)]
 pub struct DiemVM(DiemVMImpl);
@@ -647,8 +647,7 @@ impl DiemVM {
             transactions.len()
         );
 
-        let num_txns = transactions.len();
-        let mut signature_verified_block: Vec<Result<PreprocessedTransaction, VMStatus>>;
+        let signature_verified_block: Vec<Result<PreprocessedTransaction, VMStatus>>;
         {
             // Verify the signatures of all the transactions in parallel.
             // This is time consuming so don't wait and do the checking
@@ -715,7 +714,7 @@ impl DiemVM {
         // STARTS -- DEPENDENCY INFERENCE HACK / Replace with static analysis of write set
         let mut read_write_infer = HashMap::<Vec<u8>, ScriptReadWriteSet>::new();
 
-        for (idx, txn) in transactions.iter().enumerate() {
+        for (_idx, txn) in transactions.iter().enumerate() {
             if let Transaction::UserTransaction(user_txn) = txn {
                 match user_txn.payload() {
                     TransactionPayload::Script(script) => {
@@ -727,7 +726,7 @@ impl DiemVM {
                             let log_context = AdapterLogSchema::new(xref.id(), 0);
                             // Execute the transaction
                             let verif_txn = preprocess_transaction(txn.clone());
-                            if let Ok((vm_status, output, sender)) =
+                            if let Ok((_vm_status, output, _)) =
                                 self.execute_single_txn(&local_state_view_cache, &verif_txn, &log_context)
                             {
                                 // Record the read-set
@@ -803,13 +802,14 @@ impl DiemVM {
             WriteVersionValue,
             OutcomeArray
         };
-        use num_cpus;
 
         // Count and print the number of transactions.
         let num_txns = transactions.len();
         let cpus = num_cpus::get();
         let chunks = max(1, num_txns / cpus);
-        let mut should_restart = false;
+
+        // TODO: deal with execution restarting ...
+        let mut _should_restart = false;
         println!("Executing block, transaction count: {}", num_txns);
 
         // Update the dependency analysis structure. We only do this for blocks that
@@ -817,7 +817,7 @@ impl DiemVM {
         // transactions are detected this returns and err, and we revert to sequential
         // block processing.
         let execute_start = std::time::Instant::now();
-        let mut infer_result = self.dependency_structure_hack(&transactions, data_cache);
+        let infer_result = self.dependency_structure_hack(&transactions, data_cache);
         let read_write_infer = match infer_result {
             Err(_) => return self.execute_block_impl(transactions, data_cache, false),
             Ok(val) => val,
@@ -911,7 +911,7 @@ impl DiemVM {
             }
             else {
                 let pivot_address = split[split.len()/2].0.clone();
-                let (left, right): (Vec<_>, Vec<_>) = split.into_iter().partition(|(p,v)| *p < pivot_address);
+                let (left, right): (Vec<_>, Vec<_>) = split.into_iter().partition(|(p,_)| *p < pivot_address);
                 let ((m0, mut left_map), (m1, right_map)) = rayon::join(
                     || split_merge(num_cpus, num + 1, left),
                     || split_merge(num_cpus, num + 1, right),
@@ -952,7 +952,7 @@ impl DiemVM {
         scope(|s| {
             // How many threads to use?
             let compute_cpus = min( 1 + (num_txns / 50), cpus - 1);     // Ensure we have at least 50 tx per thread.
-            let compute_cpus = min( (num_txns / max_len), compute_cpus);  // Ensure we do not higher rate of conflict than concurrency.
+            let compute_cpus = min( num_txns / max_len, compute_cpus);  // Ensure we do not higher rate of conflict than concurrency.
 
             println!("Launching {} threads to execute (Max conflict {}) ...", compute_cpus, max_len);
             for _ in 0..(compute_cpus) {
@@ -961,18 +961,14 @@ impl DiemVM {
                     let thread_data_cache = SingleThreadReadCache::new(data_cache);
                     // Make a new VM per thread -- with its own module cache
                     let thread_vm = DiemVM::new(&thread_data_cache);
-
                     let mut tx_idx_ring_buffer = VecDeque::with_capacity(10);
-
-                    let mut wait_num = 0_usize;
-                    let mut proceed_num = 0_usize;
 
                     loop {
 
                         if tx_idx_ring_buffer.len() < 10 { // How many transactions to have in the buffer.
 
                             let idx = curent_idx.fetch_add(1, Ordering::Relaxed);
-                            if (idx < stop_when) {
+                            if idx < stop_when {
                                 let txn = &signature_verified_block[idx];
 
                                 let (params, deps) = if let Ok(PreprocessedTransaction::UserTransaction(user_txn)) = txn {
@@ -1012,20 +1008,18 @@ impl DiemVM {
                             if deps.reads(&params).any(|k| versioned_state_view.will_read_block(&k) ) {
                                 // println!("Delay {}", idx);
                                 tx_idx_ring_buffer.push_back( (idx, txn, params, deps) );
-                                wait_num += 1;
 
                                 // This causes a PAUSE on an x64 arch, and takes 140 cycles. Allows other
                                 // core to take resources and better HT.
                                 ::std::sync::atomic::spin_loop_hint();
                                 continue
                             }
-                            proceed_num += 1;
 
                             // Execute the transaction
                             let log_context = AdapterLogSchema::new(versioned_state_view.id(), idx);
                             let res = thread_vm.execute_single_txn(&versioned_state_view, txn, &log_context);
                             match res {
-                                Ok((vm_status, output, sender)) => {
+                                Ok((vm_status, output, _)) => {
                                     if !output.status().is_discarded() {
 
                                         for (k,v) in output.write_set() {
@@ -1052,7 +1046,7 @@ impl DiemVM {
                                         outcomes.set_result(idx, (vm_status, output), false);
                                     }
                                 }
-                                Err(e) => {
+                                Err(_) => {
                                     panic!("TODO STOP VM & RETURN ERROR");
                                     // return Err(e);
                                 }

@@ -12,7 +12,7 @@ use diem_types::{
 };
 
 use crate::{
-    counters::*, create_access_path, };
+    create_access_path, };
 
 use move_vm_runtime::{
     data_cache::{RemoteCache, RefBytes}
@@ -22,9 +22,6 @@ use move_core_types::{
     account_address::AccountAddress,
     language_storage::{ModuleId, StructTag},
 };
-
-use rayon::prelude::*;
-
 
 use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
@@ -80,7 +77,7 @@ impl OutcomeArray {
         return (self.success_num.load(Ordering::Relaxed), self.failure_num.load(Ordering::Relaxed))
     }
 
-    pub fn get_all_results(self) -> (Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>){
+    pub fn get_all_results(self) -> Result<Vec<(VMStatus, TransactionOutput)>, VMStatus>{
 
         let results = self.results;
         Ok(
@@ -119,17 +116,14 @@ use diem_types::{
 };
 
 impl WritesPlaceholder {
-    pub fn new(len : usize) -> WritesPlaceholder {
-        WritesPlaceholder {
-            data: HashMap::new(),
-        }
-    }
 
     pub fn new_from(data:HashMap<AccessPath, BTreeMap<usize, WriteVersionValue>>) -> WritesPlaceholder {
         WritesPlaceholder {
             data,
         }
     }
+
+    /* How to get the latest version of the DB that changed.
 
     pub fn get_change_set(&self) -> Vec<(AccessPath, Option<Vec<u8>>)> {
         let mut change_set = Vec::with_capacity(self.data.len());
@@ -140,9 +134,7 @@ impl WritesPlaceholder {
         change_set
     }
 
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
+    */
 
     pub fn write(&self, key: &AccessPath, version: usize, data: Option<Vec<u8>>) -> Result<(), ()> {
         // By construction there will only be a single writer, before the
@@ -264,12 +256,6 @@ pub(crate) struct WriteVersionKey {
     version: usize,
 }
 
-impl WriteVersionKey {
-    pub fn new(path: AccessPath, version: usize) -> WriteVersionKey {
-        WriteVersionKey { path, version }
-    }
-}
-
 const FLAG_UNASSIGNED: usize = 0;
 const FLAG_DONE: usize = 2;
 const FLAG_SKIP: usize = 3;
@@ -365,7 +351,7 @@ pub(crate) struct VersionedStateView<'view> {
 }
 
 impl<'view> VersionedStateView<'view>{
-    pub fn new(version : usize, base_view: &'view StateView, placeholder : &'view WritesPlaceholder) -> VersionedStateView<'view> {
+    pub fn new(version : usize, base_view: &'view dyn StateView, placeholder : &'view WritesPlaceholder) -> VersionedStateView<'view> {
         VersionedStateView {
             version,
             base_view,
@@ -496,7 +482,7 @@ pub struct SingleThreadReadCache<'view> {
 }
 
 impl<'view> SingleThreadReadCache<'view> {
-    pub fn new(base_view: &'view StateView) -> SingleThreadReadCache<'view> {
+    pub fn new(base_view: &'view dyn StateView) -> SingleThreadReadCache<'view> {
         SingleThreadReadCache {
             base_view,
             cache : RefCell::new(HashMap::new()),

@@ -18,11 +18,10 @@ use move_core_types::{
     account_address::AccountAddress,
     language_storage::{ModuleId, StructTag},
 };
-use move_vm_runtime::data_cache::{RemoteCache, RefBytes};
+use move_vm_runtime::data_cache::{RemoteCache, };
 use std::collections::btree_map::BTreeMap;
 use vm::errors::*;
 
-use std::collections::HashSet;
 use std::sync::Mutex;
 
 /// A local cache for a given a `StateView`. The cache is private to the Diem layer
@@ -92,15 +91,16 @@ impl<'a> StateViewCache<'a> {
         }
     }
 
-    // Publishes a `WriteSet` computed at the end of a transaction.
-    // The effect is to build a layer in front of the `StateView` which keeps
-    // track of the data as if the changes were applied immediately.
+
+    /* Example of how to write directly from the Option(vec) using in the DB.
+
     pub(crate) fn push_changes(&mut self, changes : Vec<(AccessPath, Option<Vec<u8>>)>) {
         for (k, v) in changes {
             self.data_map.insert(k, v);
         }
     }
 
+    */
 }
 
 impl<'block> StateView for StateViewCache<'block> {

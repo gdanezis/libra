@@ -133,7 +133,7 @@ use diem_types::{
 };
 use move_core_types::{
     account_address::AccountAddress,
-    language_storage::{ResourceKey, StructTag},
+    language_storage::{StructTag, },
 };
 
 /// This trait describes the VM's validation interfaces.

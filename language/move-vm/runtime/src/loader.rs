@@ -1673,6 +1673,7 @@ impl Function {
         self.index
     }
 
+
     pub(crate) fn get_resolver<'a>(&self, loader: &'a Loader) -> Resolver<'a> {
         match &self.scope {
             Scope::Module(module_id) => {
