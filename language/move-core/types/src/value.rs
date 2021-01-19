@@ -9,6 +9,7 @@ use serde::{
     Deserialize, Serialize,
 };
 use std::fmt::{self, Debug};
+use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct MoveStruct(Vec<MoveValue>);
@@ -26,7 +27,7 @@ pub enum MoveValue {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MoveStructLayout(Vec<MoveTypeLayout>);
+pub struct MoveStructLayout(Rc<Box<Vec<MoveTypeLayout>>>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MoveTypeLayout {
@@ -127,7 +128,7 @@ impl MoveStruct {
 
 impl MoveStructLayout {
     pub fn new(types: Vec<MoveTypeLayout>) -> Self {
-        MoveStructLayout(types)
+        MoveStructLayout(Rc::new(Box::new(types)))
     }
     pub fn fields(&self) -> &[MoveTypeLayout] {
         &self.0
