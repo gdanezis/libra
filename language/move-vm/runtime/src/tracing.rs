@@ -18,12 +18,6 @@ use ::{
     vm::file_format::Bytecode,
 };
 
-use crate::{
-    interpreter::Interpreter,
-    loader::{Function, Loader},
-    logging::LogContext,
-};
-
 #[cfg(debug_assertions)]
 const MOVE_VM_TRACING_ENV_VAR_NAME: &str = "MOVE_VM_TRACE";
 

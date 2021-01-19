@@ -37,18 +37,17 @@
 
 use crate::account_address::AccountAddress;
 use diem_crypto::hash::HashValue;
-use move_core_types::language_storage::{ModuleId, ResourceKey, StructTag, CODE_TAG, RESOURCE_TAG};
+use move_core_types::language_storage::{ModuleId, StructTag, CODE_TAG, RESOURCE_TAG};
 #[cfg(any(test, feature = "fuzzing"))]
 use proptest_derive::Arbitrary;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use std::cell::RefCell;
-use std::thread;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{HashMap, };
 
 // A thread local cache ...
-thread_local!(static CACHE_AP: RefCell<BTreeMap<StructTag, Vec<u8>>> = RefCell::new(BTreeMap::new()));
+thread_local!(static CACHE_AP: RefCell<HashMap<StructTag, Vec<u8>>> = RefCell::new(HashMap::new()));
 
 #[derive(Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Ord, PartialOrd)]
 #[cfg_attr(any(test, feature = "fuzzing"), derive(Arbitrary))]

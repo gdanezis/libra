@@ -8,7 +8,7 @@ use bytecode_verifier::{
     RecursiveStructDefChecker, ResourceTransitiveChecker, SignatureChecker,
 };
 use diem_crypto::HashValue;
-use diem_infallible::Mutex;
+
 use diem_logger::prelude::*;
 use move_core_types::{
     identifier::{IdentStr, Identifier},
@@ -20,7 +20,7 @@ use move_vm_types::{
     data_store::DataStore,
     loaded_data::runtime_types::{StructType, Type},
 };
-use std::{collections::HashMap, fmt::Debug, hash::Hash, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, hash::Hash, };
 use vm::{
     access::{ModuleAccess, ScriptAccess},
     errors::{verification_error, Location, PartialVMError, PartialVMResult, VMError, VMResult},
@@ -35,9 +35,6 @@ use vm::{
 
 use std::cell::RefCell;
 use std::rc::Rc;
-
-use std::sync::RwLock;
-use std::sync::atomic::spin_loop_hint;
 
 // A simple cache that offers both a HashMap and a Vector lookup.
 // Values are forced into a `Arc` so they can be used from multiple thread.
@@ -73,9 +70,11 @@ where
             .and_then(|idx| self.binaries.get(*idx))
     }
 
+    /*
     fn len(&self) -> usize {
         self.binaries.len()
     }
+    */
 }
 
 // A script cache is a map from the hash value of a script and the `Script` itself.
@@ -138,9 +137,11 @@ impl ModuleCache {
     // Common "get" operations
     //
 
+    /*
     fn clone_functions(&self) -> Vec<Rc<Function>> {
         self.functions.clone()
     }
+    */
 
     // Retrieve a module by `ModuleId`. The module may have not been loaded yet in which
     // case `None` is returned
@@ -436,19 +437,11 @@ impl ModuleCache {
 // (operating on values on the stack) and when cache needs updating the mutex must be taken.
 // The `pub(crate)` API is what a Loader offers to the runtime.
 
-use  parking_lot;
-use  parking_lot::const_rwlock;
-
 pub(crate) struct Loader {
     scripts: RefCell<ScriptCache>,
     module_cache: RefCell<ModuleCache>,
     type_cache: RefCell<TypeCache>,
 }
-
-// unsafe impl Send for Loader {}
-// unsafe impl Sync for Loader {}
-
-const BUSY_FLAG : usize = usize::MAX;
 
 impl Loader {
     pub(crate) fn new() -> Self {
@@ -1023,6 +1016,9 @@ pub(crate) struct Resolver<'a> {
 }
 
 impl<'a> Resolver<'a> {
+
+    /* Older simple variants for reference
+
     fn for_module(loader: &'a Loader, module: Rc<Module>) -> Self {
         let binary = BinaryType::Module(module);
         Self { loader, binary }
@@ -1033,10 +1029,11 @@ impl<'a> Resolver<'a> {
         Self { loader, binary }
     }
 
+    */
+
     fn for_binary_type(loader: &'a Loader, binary: BinaryType) -> Self {
         Self { loader, binary }
     }
-
 
     //
     // Constant resolution
@@ -1664,6 +1661,7 @@ impl Function {
         self.index
     }
 
+    /* Older version for reference
 
     pub(crate) fn get_resolver<'a>(&self, loader: &'a Loader) -> Resolver<'a> {
         match &self.scope {
@@ -1677,6 +1675,8 @@ impl Function {
             }
         }
     }
+
+    */
 
     pub(crate) fn get_resolver_from_token<'a>(&self, token : ResolverToken, loader: &'a Loader) -> Resolver<'a> {
         Resolver::for_binary_type(loader, token.bin_type)

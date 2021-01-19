@@ -9,7 +9,7 @@ use crate::{
 use anyhow::Result;
 use move_core_types::{
     identifier::{IdentStr, Identifier},
-    language_storage::{ResourceKey, StructTag},
+    language_storage::{StructTag, },
     move_resource::MoveResource,
 };
 use serde::{Deserialize, Serialize};

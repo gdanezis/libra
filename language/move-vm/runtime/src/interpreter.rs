@@ -22,7 +22,7 @@ use move_vm_types::{
         self, GlobalValue, IntegerValue, Locals, Reference, Struct, StructRef, VMValueCast, Value,
     },
 };
-use std::{cmp::min, collections::VecDeque, fmt::Write, sync::Arc};
+use std::{cmp::min, collections::VecDeque, fmt::Write, };
 use vm::{
     errors::*,
     file_format::{Bytecode, FunctionHandleIndex, FunctionInstantiationIndex, Signature},
@@ -692,8 +692,6 @@ impl Frame {
             resolver_token : None,
         }
     }
-
-    fn set_resolver() {}
 
     /// Execute a Move function until a return or a call opcode is found.
     fn execute_code(

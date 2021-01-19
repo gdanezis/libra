@@ -17,10 +17,9 @@ use diem_types::{
 };
 use scratchpad::{AccountStatus, SparseMerkleTree};
 use std::{
-    cell::RefCell,
     collections::{hash_map::Entry, HashMap},
     convert::TryInto,
-    sync::{Arc, Mutex, RwLock}
+    sync::{Arc, }
 };
 
 use  parking_lot;
