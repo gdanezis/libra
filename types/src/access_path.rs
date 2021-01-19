@@ -43,6 +43,13 @@ use proptest_derive::Arbitrary;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use std::cell::RefCell;
+use std::thread;
+use std::collections::HashMap;
+
+// A thread local cache ...
+thread_local!(static CACHE_AP: RefCell<HashMap<StructTag, Vec<u8>>> = RefCell::new(HashMap::new()));
+
 #[derive(Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Ord, PartialOrd)]
 #[cfg_attr(any(test, feature = "fuzzing"), derive(Arbitrary))]
 pub struct AccessPath {
@@ -63,7 +70,16 @@ impl AccessPath {
     }
 
     pub fn resource_access_vec(tag: StructTag) -> Vec<u8> {
-        bcs::to_bytes(&Path::Resource(tag)).expect("Unexpected serialization error")
+        CACHE_AP.with(|f| {
+            if f.borrow().contains_key(&tag){
+                return f.borrow().get(&tag).unwrap().clone()
+            }
+            else {
+                let val = bcs::to_bytes(&Path::Resource(tag.clone())).expect("Unexpected serialization error");
+                f.borrow_mut().insert(tag, val.clone());
+                val
+            }
+        })
     }
 
     /// Convert Accesses into a byte offset which would be used by the storage layer to resolve
