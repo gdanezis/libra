@@ -21,6 +21,7 @@ def make_profile(profile_raw_data):
     IDGEN = 1000
 
     buffer = []
+    recursion = set()
     for line in profile_raw_data:
         if line == '\n':
             continue
@@ -50,6 +51,7 @@ def make_profile(profile_raw_data):
                 old_called_from = called_from
                 old_b = b
             buffer = []
+            recursion = set()
         except:
             func = line.split('+')[0].strip()
             if func[-19:-17] == "::":
@@ -57,7 +59,9 @@ def make_profile(profile_raw_data):
 
             parts = re.split('::', func)
             func = (escape('::'.join(parts[:-1])), escape(parts[-1]))
-            buffer += [ func ]
+            if func not in recursion:
+                recursion.add(func)
+                buffer += [ func ]
     return profile
 
 def make_html(profile):
