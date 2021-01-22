@@ -13,6 +13,7 @@ import re
 import math
 profile_raw_data = open('output.txt', encoding='latin_1')
 FINAL = ("","-| end")
+TOTAL = "___TOTAL"
 
 def make_profile(profile_raw_data):
     profile = {}
@@ -20,6 +21,7 @@ def make_profile(profile_raw_data):
 
     IDGEN = 1000
 
+    total = 0
     buffer = []
     recursion = set()
     for line in profile_raw_data:
@@ -52,6 +54,7 @@ def make_profile(profile_raw_data):
                 old_b = b
             buffer = []
             recursion = set()
+            total += num
         except:
             func = line.split('+')[0].strip()
             if func[-19:-17] == "::":
@@ -62,10 +65,12 @@ def make_profile(profile_raw_data):
             if func not in recursion:
                 recursion.add(func)
                 buffer += [ func ]
-    return profile
+    return (total, profile)
 
 def make_html(profile):
-    print('<html><head><link rel="stylesheet" href="style.css"></head><body><pre>')
+    (total, profile) = profile
+    print('<html><body><pre>')
+    print(f'<style>{open("style.css").read()}</style>')
     print("Samples  | Log. Weight  | Callers    | Function Name")
     print("---------+--------------+------------+----------------------------------------------" + ('-'*100) )
     for l in sorted(profile):
@@ -100,10 +105,9 @@ def make_html(profile):
     print("</body></html>")
 
 def make_svg(profile):
+    (total, profile) = profile
     print("digraph mygraph {")
     print("  node [shape=box];")
-
-    (total, _, _, _) = profile[FINAL]
 
     saved = set()
     for l in sorted(profile):
